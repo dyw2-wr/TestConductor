@@ -1,0 +1,19 @@
+{
+  "schema_version": "test-design-request.v4",
+  "request_id": "REQ-MULTI-INITIAL-V4",
+  "requirements": [
+    {
+      "requirement_id": "REQ-MULTI-INITIAL",
+      "content": "初始多通道验收：登录首页应能打开，健康接口返回 200，数据库中的服务状态为 ready；HTTP 服务应满足基础延迟目标；登记的 TCP 服务端口应可连接。这里只验证受控的本地演示环境，不扫描端口范围。"
+    }
+  ],
+  "target": {
+    "system_id": "test_conductor-demo",
+    "environment": "local"
+  },
+  "selections": {
+    "techniques": ["positive", "negative", "boundary", "state_transition", "random"],
+    "allowed_channels": ["ui", "api", "database", "performance", "port"],
+    "knowledge_scope_ids": []
+  }
+}

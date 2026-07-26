@@ -1,0 +1,179 @@
+{
+  "schema_version": "approved-test-design-bundle.v4",
+  "design": {
+    "schema_version": "test-design.v4",
+    "design_id": "design-REQ-LOGIN-001",
+    "version": 1,
+    "status": "approved",
+    "title": "登录错误锁定",
+    "objective": {
+      "text": "连续输入错误密码 5 次",
+      "derivation_note": null
+    },
+    "target": {
+      "system_id": "account-web",
+      "environment": "staging"
+    },
+    "selections": {
+      "techniques": [
+        "positive"
+      ],
+      "techniques_by_channel": {},
+      "allowed_channels": [
+        "ui",
+        "database"
+      ],
+      "required_channels": [],
+      "knowledge_scope_ids": [
+        "ui:login-approved"
+      ]
+    },
+    "in_scope": [
+      {
+        "text": "账号被锁定并显示账号已锁定",
+        "derivation_note": null
+      }
+    ],
+    "out_of_scope": [],
+    "scenarios": [
+      {
+        "scenario_id": "design-REQ-LOGIN-001-SCN-0001",
+        "title": "连续错误密码锁定账号",
+        "techniques": [
+          "positive"
+        ],
+        "requirement_ids": [
+          "REQ-LOGIN"
+        ],
+        "required_states": [
+          {
+            "text": "测试开始前账号未锁定",
+            "derivation_note": null,
+            "required_state_id": "design-REQ-LOGIN-001-REQSTATE-0001"
+          }
+        ],
+        "operations": [
+          {
+            "text": "连续输入错误密码 5 次",
+            "derivation_note": null,
+            "operation_id": "design-REQ-LOGIN-001-OP-0001",
+            "channel_hint": "ui"
+          }
+        ],
+        "expected_results": [
+          {
+            "text": "页面显示账号已锁定",
+            "derivation_note": null,
+            "expected_result_id": "design-REQ-LOGIN-001-EXP-0001",
+            "after_operation_id": "design-REQ-LOGIN-001-OP-0001",
+            "channel_hint": "ui",
+            "operator": null,
+            "expected": null,
+            "unit": null
+          },
+          {
+            "text": "账号锁定状态为 true",
+            "derivation_note": null,
+            "expected_result_id": "design-REQ-LOGIN-001-EXP-0002",
+            "after_operation_id": "design-REQ-LOGIN-001-OP-0001",
+            "channel_hint": "database",
+            "operator": "equals",
+            "expected": true,
+            "unit": null
+          }
+        ],
+        "data_requirements": [
+          {
+            "text": "使用可恢复的测试账号",
+            "derivation_note": null,
+            "data_id": "design-REQ-LOGIN-001-DATA-0001",
+            "constraints": [
+              {
+                "text": "测试开始前账号未锁定",
+                "derivation_note": null
+              }
+            ]
+          }
+        ],
+        "state_impact": {
+          "impact": "changes_state",
+          "rationale": {
+            "text": "账号被锁定",
+            "derivation_note": null
+          },
+          "cleanup_goal": {
+            "text": "测试结束后恢复测试账号",
+            "derivation_note": null,
+            "cleanup_goal_id": "design-REQ-LOGIN-001-CLEANUP-0001",
+            "subject_data_ids": [
+              "design-REQ-LOGIN-001-DATA-0001"
+            ]
+          }
+        }
+      }
+    ],
+    "open_questions": []
+  },
+  "input_snapshot": {
+    "request_id": "REQ-LOGIN-001",
+    "requirements": [
+      {
+        "requirement_id": "REQ-LOGIN",
+        "content": "登录锁定需求\n使用可恢复的测试账号。\n连续输入错误密码 5 次。\n账号被锁定并显示账号已锁定。\n测试结束后恢复测试账号。",
+        "content_hash": "sha256:ccd31e23b51283b9c16ed9b1d2c011f7bf2309c3b5eaa31834c7fdc936ca18ca"
+      }
+    ],
+    "target": {
+      "system_id": "account-web",
+      "environment": "staging"
+    },
+    "selections": {
+      "techniques": [
+        "positive"
+      ],
+      "allowed_channels": [
+        "ui",
+        "database"
+      ],
+      "required_channels": [],
+      "knowledge_scope_ids": [
+        "ui:login-approved"
+      ]
+    },
+    "approved_knowledge": [
+      {
+        "scope_id": "ui:login-approved",
+        "knowledge_id": "UI-APPROVED",
+        "version": 1,
+        "approval_id": "KNOWLEDGE-REVIEW-1",
+        "approved_at": "2026-07-18T00:00:00Z",
+        "content": "登录页面入口为 /login",
+        "content_hash": "sha256:9e70ceb2955ef93d75db4cac7970f276fad32f170721bf10b36b4c545c9a8ca7"
+      }
+    ],
+    "review_feedback": null,
+    "content_hash": "sha256:ff904f0fe4d85ff393370966a029dfc9da40b6da589206b2a5da76220b1fe25c"
+  },
+  "validation": {
+    "design_id": "design-REQ-LOGIN-001",
+    "design_version": 1,
+    "design_content_hash": "sha256:1f32d809a0cecc52f73de5edce5b1557538707f938d53c83d1206cbb806fbab5",
+    "input_content_hash": "sha256:32b8346559426459c35924f68c1699384978c605cdd38435d9102b12c6923a92",
+    "passed": true,
+    "findings": [],
+    "validation_content_hash": "sha256:fe7e2b71c515cf3a0363df3925dd394d95f0964cdd1cc4e42ae2bb074df30763"
+  },
+  "review": {
+    "review_id": "review-6e47875fe9274a78ae8b0f7e947147eb",
+    "design_id": "design-REQ-LOGIN-001",
+    "design_version": 1,
+    "decision": "approved",
+    "comments": "逻辑设计已核对",
+    "reviewed_at": "2026-07-23T01:38:38.937795+00:00",
+    "design_content_hash": "sha256:1f32d809a0cecc52f73de5edce5b1557538707f938d53c83d1206cbb806fbab5",
+    "input_content_hash": "sha256:32b8346559426459c35924f68c1699384978c605cdd38435d9102b12c6923a92",
+    "validation_content_hash": "sha256:fe7e2b71c515cf3a0363df3925dd394d95f0964cdd1cc4e42ae2bb074df30763",
+    "review_content_hash": "sha256:20b3a18596eb633047aa92a2f644cc6e5db9623faf41429f9c6c566247551a0f"
+  },
+  "trace_id": "trace-design-REQ-LOGIN-001-v1"
+}

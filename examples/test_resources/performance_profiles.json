@@ -1,0 +1,25 @@
+{
+  "schema_version": "performance-profile-set.v1",
+  "profiles": [
+    {
+      "profile_ref": "perf.health.smoke",
+      "description": "健康接口轻量性能检查",
+      "driver_ref": "driver.http",
+      "state_effect": "read_only",
+      "max_duration_seconds": 300,
+      "max_virtual_users": 100,
+      "observables": [
+        {
+          "observable_ref": "observable.perf.health-p95",
+          "description": "响应延迟 p95",
+          "metric": "latency_ms",
+          "unit": "ms",
+          "percentile": "p95"
+        }
+      ],
+      "runtime": {
+        "target_operation_id": "health.get"
+      }
+    }
+  ]
+}

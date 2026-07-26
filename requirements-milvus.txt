@@ -1,0 +1,2 @@
+-r requirements.txt
+pymilvus[model]==2.6.17

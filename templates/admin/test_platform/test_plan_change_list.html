@@ -1,0 +1,7 @@
+{% extends "admin/test_platform/change_list_base.html" %}
+
+{% block object-tools-items %}
+    {% if perms.test_platform.add_testplanartifact %}
+        <li><a href="{% url 'admin:test_platform_testplanartifact_import' %}">导入已审批测试计划</a></li>
+    {% endif %}
+{% endblock %}

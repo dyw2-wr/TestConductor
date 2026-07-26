@@ -1,0 +1,12 @@
+openapi: 3.0.3
+info:
+  title: Local TestConductor API
+  version: 1.0.0
+paths:
+  /health/:
+    get:
+      operationId: health.get
+      summary: 读取服务健康状态
+      responses:
+        "200":
+          description: 服务正常

@@ -1,0 +1,24 @@
+{
+  "schema_version": "approved-knowledge-catalog.v1",
+  "system_id": "demo-system",
+  "documents": [
+    {
+      "scope_id": "refund-policy",
+      "knowledge_id": "refund-approval-policy",
+      "version": 1,
+      "approval_id": "approval-refund-v1",
+      "approved_at": "2026-07-23T00:00:00+08:00",
+      "content": "退款申请超过5000元时必须由主管审批。",
+      "content_hash": "sha256:474ae8849ea5d8c265b1b72c50e27bf0f58d8671cd69200926f07c17fc37d445"
+    },
+    {
+      "scope_id": "account-security",
+      "knowledge_id": "account-lock-policy",
+      "version": 1,
+      "approval_id": "approval-lock-v1",
+      "approved_at": "2026-07-23T00:00:00+08:00",
+      "content": "账户连续登录失败5次后锁定，需要管理员复核后解锁。",
+      "content_hash": "sha256:84378110285dd0428ec577c8c411e9c0e6367a981cedc3037cb79b62b1d1c524"
+    }
+  ]
+}

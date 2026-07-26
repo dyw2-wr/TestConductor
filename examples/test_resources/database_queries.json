@@ -1,0 +1,20 @@
+{
+  "schema_version": "database-access-policy.v1",
+  "database_schema": {
+    "dialect": "sqlite",
+    "tables": [
+      {
+        "name": "service_status",
+        "description": "服务当前状态表",
+        "columns": [
+          {
+            "name": "status",
+            "data_type": "text",
+            "description": "服务状态"
+          }
+        ]
+      }
+    ],
+    "allowed_parameter_refs": []
+  }
+}

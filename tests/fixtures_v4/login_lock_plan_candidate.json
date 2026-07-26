@@ -1,0 +1,108 @@
+{
+  "flows": [
+    {
+      "scenario_id": "design-REQ-LOGIN-LOCK-V4-SCN-0001",
+      "stages": [
+        {
+          "executor_kind": "procedure_playwright",
+          "operations": [
+            {
+              "operation_id": "design-REQ-LOGIN-LOCK-V4-OP-0001",
+              "catalog_ref": "procedure.login.submit-wrong-password"
+            }
+          ],
+          "expected_results": [],
+          "data_bindings": [
+            {
+              "data_id": "design-REQ-LOGIN-LOCK-V4-DATA-0001",
+              "consumer_id": "design-REQ-LOGIN-LOCK-V4-OP-0001",
+              "binding_ref": "binding.procedure.login-account"
+            },
+            {
+              "data_id": "design-REQ-LOGIN-LOCK-V4-DATA-0002",
+              "consumer_id": "design-REQ-LOGIN-LOCK-V4-OP-0001",
+              "binding_ref": "binding.procedure.invalid-password"
+            }
+          ]
+        },
+        {
+          "executor_kind": "database",
+          "operations": [],
+          "expected_results": [
+            {
+              "expected_result_id": "design-REQ-LOGIN-LOCK-V4-EXP-0001",
+              "catalog_ref": "db.account.lock-state",
+              "observable_ref": "observable.db.account-locked"
+            }
+          ],
+          "data_bindings": [
+            {
+              "data_id": "design-REQ-LOGIN-LOCK-V4-DATA-0001",
+              "consumer_id": "design-REQ-LOGIN-LOCK-V4-EXP-0001",
+              "binding_ref": "binding.db.lock-account"
+            }
+          ]
+        },
+        {
+          "executor_kind": "procedure_playwright",
+          "operations": [
+            {
+              "operation_id": "design-REQ-LOGIN-LOCK-V4-OP-0002",
+              "catalog_ref": "procedure.login.submit-wrong-password"
+            }
+          ],
+          "expected_results": [],
+          "data_bindings": [
+            {
+              "data_id": "design-REQ-LOGIN-LOCK-V4-DATA-0001",
+              "consumer_id": "design-REQ-LOGIN-LOCK-V4-OP-0002",
+              "binding_ref": "binding.procedure.login-account"
+            },
+            {
+              "data_id": "design-REQ-LOGIN-LOCK-V4-DATA-0002",
+              "consumer_id": "design-REQ-LOGIN-LOCK-V4-OP-0002",
+              "binding_ref": "binding.procedure.invalid-password"
+            }
+          ]
+        },
+        {
+          "executor_kind": "database",
+          "operations": [],
+          "expected_results": [
+            {
+              "expected_result_id": "design-REQ-LOGIN-LOCK-V4-EXP-0002",
+              "catalog_ref": "db.account.lock-state",
+              "observable_ref": "observable.db.account-locked"
+            }
+          ],
+          "data_bindings": [
+            {
+              "data_id": "design-REQ-LOGIN-LOCK-V4-DATA-0001",
+              "consumer_id": "design-REQ-LOGIN-LOCK-V4-EXP-0002",
+              "binding_ref": "binding.db.lock-account"
+            }
+          ]
+        }
+      ],
+      "required_state_resolutions": [
+        {
+          "resolution_kind": "data_guarantee",
+          "required_state_id": "design-REQ-LOGIN-LOCK-V4-REQSTATE-0001",
+          "data_id": "design-REQ-LOGIN-LOCK-V4-DATA-0001"
+        }
+      ],
+      "cleanup": {
+        "cleanup_goal_id": "design-REQ-LOGIN-LOCK-V4-CLEANUP-0001",
+        "action_ref": "cleanup.account.unlock",
+        "data_bindings": [
+          {
+            "slot": "account_id",
+            "data_id": "design-REQ-LOGIN-LOCK-V4-DATA-0001",
+            "binding_ref": "binding.cleanup.unlock-account"
+          }
+        ]
+      }
+    }
+  ],
+  "open_questions": []
+}

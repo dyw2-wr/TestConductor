@@ -1,0 +1,24 @@
+{% extends "admin/base.html" %}
+{% load i18n static %}
+
+{% block extrastyle %}
+{{ block.super }}
+<link rel="stylesheet" href="{% static 'test_platform/admin.css' %}?v=20260727-5">
+{% endblock %}
+
+{% block title %}{{ title }} | TestConductor{% endblock %}
+
+{% block branding %}
+<div id="site-name">
+    <a class="tb-brand" href="{% url 'admin:index' %}">
+        <span class="tb-brand__mark" aria-hidden="true">测</span>
+        <span class="tb-brand__copy">
+            <strong>TestConductor</strong>
+            <small>可审核测试工作台</small>
+        </span>
+    </a>
+</div>
+{% endblock %}
+
+{% block welcome-msg %}{% endblock %}
+{% block userlinks %}{% endblock %}

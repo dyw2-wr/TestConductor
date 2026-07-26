@@ -1,0 +1,33 @@
+{% extends "admin/base_site.html" %}
+{% load i18n admin_urls %}
+
+{% block breadcrumbs %}
+<div class="breadcrumbs">
+    <a href="{% url 'admin:index' %}">首页</a>
+    &rsaquo; <a href="{{ changelist_url }}">执行历史</a>
+    &rsaquo; 重试 {{ run.run_id }}
+</div>
+{% endblock %}
+
+{% block content %}
+<div id="content-main">
+    <section class="module aligned">
+        <h2>选择失败处理方式</h2>
+        <div class="form-row">
+            <p><strong>原运行记录：</strong>{{ run.run_id|slice:"-8:" }}</p>
+            <p><strong>原结果：</strong>{{ run.get_status_display }}</p>
+            <p><strong>执行计划：</strong>{{ execution_plan.title }}</p>
+            <p class="help">重试会创建新的运行批次，并复用执行计划审批时冻结的输入，不覆盖原历史记录。</p>
+        </div>
+    </section>
+
+    <form method="post" novalidate>
+        {% csrf_token %}
+        <div class="submit-row">
+            <input type="submit" value="按原执行计划重试" class="default">
+            <a href="{% url 'admin:test_platform_executionplanartifact_change' execution_plan.pk %}" class="button">返回执行计划修改</a>
+            <a href="{{ changelist_url }}" class="closelink">取消</a>
+        </div>
+    </form>
+</div>
+{% endblock %}

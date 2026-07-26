@@ -1,0 +1,123 @@
+{
+  "flows": [
+    {
+      "scenario_id": "design-REQ-MULTI-INITIAL-V4-SCN-0001",
+      "stages": [
+        {
+          "executor_kind": "procedure_playwright",
+          "operations": [
+            {
+              "operation_id": "design-REQ-MULTI-INITIAL-V4-OP-0001",
+              "catalog_ref": "procedure.demo.open-home"
+            }
+          ],
+          "expected_results": [
+            {
+              "expected_result_id": "design-REQ-MULTI-INITIAL-V4-EXP-0001",
+              "catalog_ref": "procedure.demo.open-home",
+              "observable_ref": "observable.procedure.demo-ready"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "scenario_id": "design-REQ-MULTI-INITIAL-V4-SCN-0002",
+      "stages": [
+        {
+          "executor_kind": "http_api",
+          "operations": [
+            {
+              "operation_id": "design-REQ-MULTI-INITIAL-V4-OP-0002",
+              "catalog_ref": "http.demo.health"
+            }
+          ],
+          "expected_results": [
+            {
+              "expected_result_id": "design-REQ-MULTI-INITIAL-V4-EXP-0002",
+              "catalog_ref": "http.demo.health",
+              "observable_ref": "observable.http.demo-status"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "scenario_id": "design-REQ-MULTI-INITIAL-V4-SCN-0003",
+      "stages": [
+        {
+          "executor_kind": "database",
+          "operations": [
+            {
+              "operation_id": "design-REQ-MULTI-INITIAL-V4-OP-0003",
+              "catalog_ref": "db.demo.status"
+            }
+          ],
+          "expected_results": [
+            {
+              "expected_result_id": "design-REQ-MULTI-INITIAL-V4-EXP-0003",
+              "catalog_ref": "db.demo.status",
+              "observable_ref": "observable.db.demo-status"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "scenario_id": "design-REQ-MULTI-INITIAL-V4-SCN-0004",
+      "stages": [
+        {
+          "executor_kind": "performance",
+          "performance_stages": [
+            {
+              "duration_seconds": 0.2,
+              "virtual_users": 2
+            }
+          ],
+          "operations": [
+            {
+              "operation_id": "design-REQ-MULTI-INITIAL-V4-OP-0004",
+              "catalog_ref": "perf.demo.smoke"
+            }
+          ],
+          "expected_results": [
+            {
+              "expected_result_id": "design-REQ-MULTI-INITIAL-V4-EXP-0004",
+              "catalog_ref": "perf.demo.smoke",
+              "observable_ref": "observable.perf.demo-p95"
+            }
+          ],
+          "data_bindings": [
+            {
+              "data_id": "design-REQ-MULTI-INITIAL-V4-DATA-0001",
+              "consumer_id": "design-REQ-MULTI-INITIAL-V4-OP-0004",
+              "binding_ref": "binding.perf.target"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "scenario_id": "design-REQ-MULTI-INITIAL-V4-SCN-0005",
+      "stages": [
+        {
+          "executor_kind": "tcp_port",
+          "operations": [
+            {
+              "operation_id": "design-REQ-MULTI-INITIAL-V4-OP-0005",
+              "catalog_ref": "port.demo.service"
+            }
+          ],
+          "expected_results": [
+            {
+              "expected_result_id": "design-REQ-MULTI-INITIAL-V4-EXP-0005",
+              "catalog_ref": "port.demo.service",
+              "observable_ref": "observable.port.demo-state"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "open_questions": []
+}

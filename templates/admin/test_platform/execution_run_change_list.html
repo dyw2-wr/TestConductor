@@ -1,0 +1,24 @@
+{% extends "admin/test_platform/change_list_base.html" %}
+
+{% block date_hierarchy %}
+<form class="tb-date-picker" method="get" aria-label="按运行日期筛选">
+    {% for key, value in request.GET.items %}
+        {% if key != "date_from" and key != "date_to" and key != "p" %}
+            <input type="hidden" name="{{ key }}" value="{{ value }}">
+        {% endif %}
+    {% endfor %}
+    <span class="tb-date-picker__label">运行日期</span>
+    <label for="{{ run_date_form.date_from.id_for_label }}">开始</label>
+    {{ run_date_form.date_from }}
+    <span class="tb-date-picker__separator" aria-hidden="true">—</span>
+    <label for="{{ run_date_form.date_to.id_for_label }}">结束</label>
+    {{ run_date_form.date_to }}
+    <button type="submit">筛选</button>
+    {% if request.GET.date_from or request.GET.date_to %}
+        <a href="?{% if run_date_clear_query %}{{ run_date_clear_query }}{% endif %}">清除日期</a>
+    {% endif %}
+    {% if run_date_form.errors %}
+        <span class="errornote">{{ run_date_form.non_field_errors|striptags|default:"请选择有效日期范围" }}</span>
+    {% endif %}
+</form>
+{% endblock %}

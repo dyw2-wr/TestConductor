@@ -1,0 +1,33 @@
+{
+  "fixture_version": "raw-requirement-formats.v4",
+  "examples": [
+    {
+      "name": "plain_text_without_heading",
+      "requirement": {
+        "requirement_id": "REQ-FORMAT-PLAIN",
+        "content": "验证登录锁定。连续输入错误密码 5 次后账号应锁定，测试结束后恢复账号状态。"
+      }
+    },
+    {
+      "name": "mixed_numbering",
+      "requirement": {
+        "requirement_id": "REQ-FORMAT-NUMBERED",
+        "content": "登录要求\n1) 使用专用测试账号\n2、第四次错误后账号仍未锁定\n- 第五次错误后账号锁定\n（一）执行结束后恢复账号"
+      }
+    },
+    {
+      "name": "markdown_table",
+      "requirement": {
+        "requirement_id": "REQ-FORMAT-TABLE",
+        "content": "| 尝试次数 | 账号状态 |\n| --- | --- |\n| 4 | 未锁定 |\n| 5 | 已锁定 |"
+      }
+    },
+    {
+      "name": "json_text",
+      "requirement": {
+        "requirement_id": "REQ-FORMAT-JSON",
+        "content": "{\"feature\":\"account creation\",\"expected\":\"HTTP 201 and account exists\",\"cleanup\":\"remove test account\"}"
+      }
+    }
+  ]
+}

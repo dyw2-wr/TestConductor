@@ -1,0 +1,46 @@
+{% extends "admin/base_site.html" %}
+{% load i18n %}
+
+{% block content %}
+<div id="content-main" class="workflow-home">
+    <header class="workflow-home__header">
+        <div class="workflow-home__intro">
+            <p class="workflow-home__eyebrow">测试流程</p>
+            <h1>测试工作台</h1>
+            <p>需求、计划、执行与证据</p>
+        </div>
+    </header>
+
+    <section class="workflow-list" aria-label="测试流程入口">
+        {% for app in app_list %}
+            {% for model in app.models %}
+                <a class="workflow-step" href="{{ model.admin_url }}">
+                    <span class="workflow-step__number">{{ forloop.counter }}</span>
+                    <span class="workflow-step__body">
+                        <strong>{{ model.name }}</strong>
+                        {% if model.object_name == "TestResourceProfile" %}
+                            <span>配置页面、接口、数据库、性能或端口测试资源</span>
+                        {% elif model.object_name == "ApprovedKnowledgeEntry" %}
+                            <span>导入、审核并发布可复用的业务规则</span>
+                        {% elif model.object_name == "TestIntentImport" %}
+                            <span>提交需求，选择测试分类和可参考的业务知识</span>
+                        {% elif model.object_name == "TestPlanArtifact" %}
+                            <span>审核测试场景、预期结果以及本次采用的业务知识</span>
+                        {% elif model.object_name == "ExecutionPlanArtifact" %}
+                            <span>确认完整执行内容；审批通过后立即执行并生成报告</span>
+                        {% else %}
+                            <span>查看每次运行的结果、来源、报告和失败重试</span>
+                        {% endif %}
+                    </span>
+                    <span class="workflow-step__action">进入</span>
+                </a>
+            {% endfor %}
+        {% endfor %}
+    </section>
+</div>
+
+{% endblock %}
+
+{% block content_title %}{% endblock %}
+{% block nav-sidebar %}{% endblock %}
+{% block sidebar %}{% endblock %}

@@ -1,0 +1,10 @@
+{
+  "schema_version": "test-runtime-input.v1",
+  "variables": {
+    "test_account": "ACCOUNT-001",
+    "new_account_fixture": {
+      "username": "test-user-001"
+    }
+  },
+  "performance_mode": "dry_run"
+}

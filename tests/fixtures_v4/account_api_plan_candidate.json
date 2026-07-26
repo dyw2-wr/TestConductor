@@ -1,0 +1,82 @@
+{
+  "flows": [
+    {
+      "scenario_id": "design-REQ-ACCOUNT-CREATE-V4-SCN-0001",
+      "stages": [
+        {
+          "executor_kind": "http_api",
+          "operations": [],
+          "expected_results": [],
+          "data_bindings": [
+            {
+              "data_id": "design-REQ-ACCOUNT-CREATE-V4-DATA-0001",
+              "consumer_id": "design-REQ-ACCOUNT-CREATE-V4-REQSTATE-0001",
+              "binding_ref": "binding.http.ensure-absent-account"
+            }
+          ]
+        },
+        {
+          "executor_kind": "http_api",
+          "operations": [
+            {
+              "operation_id": "design-REQ-ACCOUNT-CREATE-V4-OP-0001",
+              "catalog_ref": "http.account.create"
+            }
+          ],
+          "expected_results": [
+            {
+              "expected_result_id": "design-REQ-ACCOUNT-CREATE-V4-EXP-0001",
+              "catalog_ref": "http.account.create",
+              "observable_ref": "observable.http.account-create-status"
+            }
+          ],
+          "data_bindings": [
+            {
+              "data_id": "design-REQ-ACCOUNT-CREATE-V4-DATA-0001",
+              "consumer_id": "design-REQ-ACCOUNT-CREATE-V4-OP-0001",
+              "binding_ref": "binding.http.create-account"
+            }
+          ]
+        },
+        {
+          "executor_kind": "database",
+          "operations": [],
+          "expected_results": [
+            {
+              "expected_result_id": "design-REQ-ACCOUNT-CREATE-V4-EXP-0002",
+              "catalog_ref": "db.account.exists",
+              "observable_ref": "observable.db.account-exists"
+            }
+          ],
+          "data_bindings": [
+            {
+              "data_id": "design-REQ-ACCOUNT-CREATE-V4-DATA-0001",
+              "consumer_id": "design-REQ-ACCOUNT-CREATE-V4-EXP-0002",
+              "binding_ref": "binding.db.exists-account"
+            }
+          ]
+        }
+      ],
+      "required_state_resolutions": [
+        {
+          "resolution_kind": "setup_stage",
+          "required_state_id": "design-REQ-ACCOUNT-CREATE-V4-REQSTATE-0001",
+          "stage_index": 1,
+          "catalog_ref": "http.account.ensure-absent"
+        }
+      ],
+      "cleanup": {
+        "cleanup_goal_id": "design-REQ-ACCOUNT-CREATE-V4-CLEANUP-0001",
+        "action_ref": "cleanup.account.delete",
+        "data_bindings": [
+          {
+            "slot": "account_id",
+            "data_id": "design-REQ-ACCOUNT-CREATE-V4-DATA-0001",
+            "binding_ref": "binding.cleanup.delete-account"
+          }
+        ]
+      }
+    }
+  ],
+  "open_questions": []
+}

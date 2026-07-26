@@ -1,0 +1,31 @@
+{% extends "admin/base_site.html" %}
+{% load i18n %}
+
+{% block content %}
+<div id="content-main">
+    <header class="tb-page-heading tb-page-heading--form">
+        <p>测试计划审批</p>
+        <span>选择测试资源并上传已经完成审批的测试计划文件；系统会校验内容与资源是否匹配。</span>
+        <a class="tb-inline-download" href="{% url 'admin:test_platform_testplanartifact_import_example' %}">下载完整 JSON 示例</a>
+    </header>
+    <form method="post" enctype="multipart/form-data" novalidate>
+        {% csrf_token %}
+        {% if form.non_field_errors %}{{ form.non_field_errors }}{% endif %}
+        <fieldset class="module aligned">
+            {% for field in form %}
+                <div class="form-row{% if field.errors %} errors{% endif %}">
+                    {{ field.errors }}
+                    <div class="flex-container">
+                        {{ field.label_tag }} {{ field }}
+                    </div>
+                    {% if field.help_text %}<div class="help">{{ field.help_text }}</div>{% endif %}
+                </div>
+            {% endfor %}
+        </fieldset>
+        <div class="submit-row tb-record-actions">
+            <input type="submit" value="校验并导入" class="default">
+            <a href="{% url 'admin:test_platform_testplanartifact_changelist' %}" class="closelink">取消</a>
+        </div>
+    </form>
+</div>
+{% endblock %}

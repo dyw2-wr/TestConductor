@@ -1,0 +1,192 @@
+{
+  "schema_version": "planning-catalog.v4",
+  "catalog_id": "catalog.account.staging.fixture.v4",
+  "system_id": "account-web",
+  "environment": "staging",
+  "available_executors": ["procedure_playwright", "http_api", "database"],
+  "http_operations": [
+    {
+      "operation_ref": "http.account.ensure-absent",
+      "description": "Ensure a test account identifier is absent before creation",
+      "base_url_ref": "runtime.account.api",
+      "method": "POST",
+      "path": "/test-support/accounts/ensure-absent",
+      "state_effect": "changes_state",
+      "allowed_binding_refs": ["binding.http.ensure-absent-account"],
+      "observables": []
+    },
+    {
+      "operation_ref": "http.account.create",
+      "description": "Create a test account",
+      "base_url_ref": "runtime.account.api",
+      "method": "POST",
+      "path": "/accounts",
+      "state_effect": "creates_data",
+      "allowed_binding_refs": ["binding.http.create-account"],
+      "observables": [
+        {
+          "observable_ref": "observable.http.account-create-status",
+          "description": "Account creation HTTP status",
+          "kind": "status"
+        }
+      ]
+    }
+  ],
+  "database_operations": [
+    {
+      "operation_ref": "db.account.lock-state",
+      "description": "Read account lock state",
+      "connection_profile_ref": "runtime.account.db",
+      "operation_kind": "query",
+      "execution_policy": "read_only",
+      "state_effect": "read_only",
+      "allowed_binding_refs": ["binding.db.lock-account"],
+      "observables": [
+        {
+          "observable_ref": "observable.db.account-locked",
+          "description": "Locked column",
+          "kind": "column",
+          "column": "locked"
+        }
+      ]
+    },
+    {
+      "operation_ref": "db.account.exists",
+      "description": "Check whether the account exists",
+      "connection_profile_ref": "runtime.account.db",
+      "operation_kind": "query",
+      "execution_policy": "read_only",
+      "state_effect": "read_only",
+      "allowed_binding_refs": ["binding.db.exists-account"],
+      "observables": [
+        {
+          "observable_ref": "observable.db.account-exists",
+          "description": "Account existence",
+          "kind": "exists"
+        }
+      ]
+    }
+  ],
+  "performance_profiles": [],
+  "procedure_profiles": [
+    {
+      "profile_ref": "procedure.login",
+      "site": "account.example.test",
+      "library_id": "site.account.example.test",
+      "library_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "description": "Reviewed login page capability snapshot",
+      "operations": [
+        {
+          "operation_ref": "procedure.login.submit-wrong-password",
+          "page_ref": "page.login",
+          "action": "Submit an invalid password on the login page",
+          "state_effect": "changes_state",
+          "procedure_id": "account.login.submit-invalid-password",
+          "procedure_version": 1,
+          "procedure_fingerprint": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+          "procedure_parameters": [
+            {
+              "name": "account",
+              "source": "input_data",
+              "source_key": "login_account_id",
+              "required": true,
+              "secret": false
+            },
+            {
+              "name": "invalid_credential",
+              "source": "input_data",
+              "source_key": "invalid_password_fixture",
+              "required": true,
+              "secret": false
+            }
+          ],
+          "allowed_binding_refs": [
+            "binding.procedure.login-account",
+            "binding.procedure.invalid-password"
+          ]
+        }
+      ],
+      "observables": []
+    }
+  ],
+  "data_bindings": [
+    {
+      "binding_ref": "binding.procedure.login-account",
+      "description": "Login account input",
+      "executor_kind": "procedure_playwright",
+      "operation_ref": "procedure.login.submit-wrong-password",
+      "input_refs": {"input.account": "login_account_id"}
+    },
+    {
+      "binding_ref": "binding.procedure.invalid-password",
+      "description": "Invalid password fixture input",
+      "executor_kind": "procedure_playwright",
+      "operation_ref": "procedure.login.submit-wrong-password",
+      "input_refs": {"input.invalid_credential": "invalid_password_fixture"}
+    },
+    {
+      "binding_ref": "binding.db.lock-account",
+      "description": "Account parameter for lock-state query",
+      "executor_kind": "database",
+      "operation_ref": "db.account.lock-state",
+      "input_refs": {"param.account_id": "login_account_id"}
+    },
+    {
+      "binding_ref": "binding.http.ensure-absent-account",
+      "description": "Account fixture for setup operation",
+      "executor_kind": "http_api",
+      "operation_ref": "http.account.ensure-absent",
+      "input_refs": {"body": "new_account_fixture"}
+    },
+    {
+      "binding_ref": "binding.http.create-account",
+      "description": "Account fixture for create operation",
+      "executor_kind": "http_api",
+      "operation_ref": "http.account.create",
+      "input_refs": {"body": "new_account_fixture"}
+    },
+    {
+      "binding_ref": "binding.db.exists-account",
+      "description": "Account parameter for existence query",
+      "executor_kind": "database",
+      "operation_ref": "db.account.exists",
+      "input_refs": {"param.account_id": "new_account_id"}
+    },
+    {
+      "binding_ref": "binding.cleanup.unlock-account",
+      "description": "Explicit account parameter for unlock cleanup",
+      "executor_kind": "http_api",
+      "operation_ref": "cleanup.account.unlock",
+      "input_refs": {"account_id": "login_account_id"}
+    },
+    {
+      "binding_ref": "binding.cleanup.delete-account",
+      "description": "Explicit account parameter for delete cleanup",
+      "executor_kind": "http_api",
+      "operation_ref": "cleanup.account.delete",
+      "input_refs": {"account_id": "new_account_id"}
+    }
+  ],
+  "cleanup_actions": [
+    {
+      "action_ref": "cleanup.account.unlock",
+      "description": "Restore the login account to unlocked state",
+      "handler_kind": "http_api",
+      "policy": "restore_state",
+      "target": "test account",
+      "always_run": true,
+      "evidence_required": true,
+      "required_data_slots": ["account_id"]
+    },
+    {
+      "action_ref": "cleanup.account.delete",
+      "description": "Delete the account created by this test flow",
+      "handler_kind": "http_api",
+      "policy": "delete_created_data",
+      "target": "created test account",
+      "always_run": true,
+      "evidence_required": true,
+      "required_data_slots": ["account_id"]
+    }
+  ]
+}

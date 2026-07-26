@@ -1,0 +1,39 @@
+{% extends "admin/change_form.html" %}
+{% load i18n admin_urls static %}
+
+{% block breadcrumbs %}
+<div class="breadcrumbs">
+    <a href="{% url 'admin:index' %}">首页</a>
+    &rsaquo; <a href="{% url 'admin:app_list' app_label=opts.app_label %}">{{ opts.app_config.verbose_name }}</a>
+    &rsaquo; {% if has_view_permission %}<a href="{% url opts|admin_urlname:'changelist' %}">{{ opts.verbose_name_plural }}</a>{% else %}{{ opts.verbose_name_plural }}{% endif %}
+    {% if not add %}&rsaquo; {{ display_record_title|default:original|truncatewords:"18" }}{% endif %}
+</div>
+{% endblock %}
+
+{% block content_title %}
+<header class="tb-page-heading tb-page-heading--form">
+    <p>{{ opts.verbose_name_plural }}</p>
+    <h1>{% if add %}新建{{ opts.verbose_name }}{% elif display_record_title %}{{ display_record_title }}{% elif original.title %}{{ original.title }}{% elif original.name %}{{ original.name }}{% else %}{{ original }}{% endif %}</h1>
+</header>
+{% if generation_auto_refresh %}
+<span id="tb-generation-poll" data-interval-ms="8000" hidden></span>
+<script src="{% static 'test_platform/generation_poll.js' %}?v=20260726-2" defer></script>
+{% endif %}
+{% endblock %}
+
+{% block content_subtitle %}{% endblock %}
+
+{% block submit_buttons_bottom %}
+<div class="submit-row tb-record-actions">
+    {% if record_show_save %}
+        <input type="submit" value="保存" class="default" name="_save">
+    {% endif %}
+    {% for command in record_commands %}
+        <button type="submit" name="{{ command.name }}" value="1"
+                class="tb-command tb-command--{{ command.kind }}">{{ command.label }}</button>
+    {% endfor %}
+    {% if record_show_delete %}
+        <p class="deletelink-box"><a href="../delete/" class="deletelink">删除此记录</a></p>
+    {% endif %}
+</div>
+{% endblock %}

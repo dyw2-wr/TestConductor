@@ -1,0 +1,163 @@
+{
+  "title": "本地多通道初始验收",
+  "objective": {
+    "text": "用同一份需求分别验证 UI、接口、数据库、压力和登记 TCP 端口的基本可用性",
+    "derivation_note": "将原文中的五类验证目标拆成可独立审核的逻辑场景"
+  },
+  "in_scope": [
+    {
+      "text": "本地演示服务的 UI、HTTP、SQLite、受控 HTTP 负载和单 TCP 端口"
+    }
+  ],
+  "out_of_scope": [
+    {
+      "text": "不扫描端口范围，不探测未登记主机，不模拟生产级压测容量"
+    }
+  ],
+  "scenarios": [
+    {
+      "title": "首页可以打开并显示就绪提示",
+      "techniques": ["positive"],
+      "requirement_ids": ["REQ-MULTI-INITIAL"],
+      "operations": [
+        {
+          "text": "通过已登记的首页能力打开本地演示页面",
+          "channel_hint": "ui"
+        }
+      ],
+      "expected_results": [
+        {
+          "text": "页面显示 Demo ready",
+          "after_operation_index": 1,
+          "channel_hint": "ui"
+        }
+      ],
+      "data_requirements": [],
+      "state_impact": {
+        "impact": "read_only",
+        "rationale": {
+          "text": "只读取页面，不改变服务状态"
+        }
+      }
+    },
+    {
+      "title": "健康接口返回成功状态",
+      "techniques": ["negative"],
+      "requirement_ids": ["REQ-MULTI-INITIAL"],
+      "operations": [
+        {
+          "text": "请求已登记的健康检查接口",
+          "channel_hint": "api"
+        }
+      ],
+      "expected_results": [
+        {
+          "text": "健康接口 HTTP 状态为 200",
+          "after_operation_index": 1,
+          "channel_hint": "api",
+          "operator": "equals",
+          "expected": 200
+        }
+      ],
+      "data_requirements": [],
+      "state_impact": {
+        "impact": "read_only",
+        "rationale": {
+          "text": "健康检查不会改变服务状态"
+        }
+      }
+    },
+    {
+      "title": "数据库服务状态为 ready",
+      "techniques": ["state_transition"],
+      "requirement_ids": ["REQ-MULTI-INITIAL"],
+      "operations": [
+        {
+          "text": "读取已登记的服务状态查询",
+          "channel_hint": "database"
+        }
+      ],
+      "expected_results": [
+        {
+          "text": "服务状态字段为 ready",
+          "after_operation_index": 1,
+          "channel_hint": "database",
+          "operator": "equals",
+          "expected": "ready"
+        }
+      ],
+      "data_requirements": [],
+      "state_impact": {
+        "impact": "read_only",
+        "rationale": {
+          "text": "查询使用只读 SQLite 连接"
+        }
+      }
+    },
+    {
+      "title": "基础 HTTP 延迟满足阈值",
+      "techniques": ["boundary"],
+      "requirement_ids": ["REQ-MULTI-INITIAL"],
+      "operations": [
+        {
+          "text": "按登记的轻量负载 profile 请求健康接口",
+          "channel_hint": "performance"
+        }
+      ],
+      "expected_results": [
+        {
+          "text": "健康接口 p95 延迟不超过 500 ms",
+          "after_operation_index": 1,
+          "channel_hint": "performance",
+          "operator": "lte",
+          "expected": 500,
+          "unit": "ms"
+        }
+      ],
+      "data_requirements": [
+        {
+          "text": "本地健康端点地址",
+          "constraints": [
+            {
+              "text": "由运行时注入，不写入测试计划"
+            }
+          ]
+        }
+      ],
+      "state_impact": {
+        "impact": "read_only",
+        "rationale": {
+          "text": "负载请求只访问健康检查接口"
+        }
+      }
+    },
+    {
+      "title": "登记 TCP 端口可连接",
+      "techniques": ["random"],
+      "requirement_ids": ["REQ-MULTI-INITIAL"],
+      "operations": [
+        {
+          "text": "连接 catalog 登记的单个 TCP 服务端口",
+          "channel_hint": "port"
+        }
+      ],
+      "expected_results": [
+        {
+          "text": "登记端口状态为 open",
+          "after_operation_index": 1,
+          "channel_hint": "port",
+          "operator": "equals",
+          "expected": "open"
+        }
+      ],
+      "data_requirements": [],
+      "state_impact": {
+        "impact": "read_only",
+        "rationale": {
+          "text": "TCP connect 探测不修改远端服务"
+        }
+      }
+    }
+  ],
+  "open_questions": []
+}

@@ -1,0 +1,60 @@
+{
+  "title": "API 创建测试账号并验证持久化",
+  "objective": {
+    "text": "验证账号创建接口和数据库持久化结果"
+  },
+  "in_scope": [
+    {"text": "账号创建、HTTP 响应、数据库存在性和测试数据清理"}
+  ],
+  "out_of_scope": [],
+  "scenarios": [
+    {
+      "title": "创建账号后从数据库确认并清理",
+      "techniques": ["positive"],
+      "requirement_ids": ["REQ-ACCOUNT-CREATE"],
+      "required_states": [
+        {"text": "拟创建的测试账号标识当前不存在"}
+      ],
+      "operations": [
+        {
+          "text": "调用账号创建接口创建测试账号",
+          "channel_hint": "api"
+        }
+      ],
+      "expected_results": [
+        {
+          "text": "账号创建接口返回 HTTP 201",
+          "after_operation_index": 1,
+          "channel_hint": "api",
+          "operator": "equals",
+          "expected": 201
+        },
+        {
+          "text": "数据库中存在新创建的账号",
+          "after_operation_index": 1,
+          "channel_hint": "database",
+          "operator": "equals",
+          "expected": true
+        }
+      ],
+      "data_requirements": [
+        {
+          "text": "本次运行唯一的测试账号资料",
+          "constraints": [
+            {"text": "账号标识不能与现有账号重复"},
+            {"text": "实际字段值由运行时变量提供"}
+          ]
+        }
+      ],
+      "state_impact": {
+        "impact": "changes_state",
+        "rationale": {"text": "setup 可能移除残留账号，主操作会创建账号"},
+        "cleanup_goal": {
+          "text": "删除本次运行创建的测试账号",
+          "subject_data_indexes": [1]
+        }
+      }
+    }
+  ],
+  "open_questions": []
+}

@@ -1,0 +1,117 @@
+{
+  "schema_version": "planning-catalog.v4",
+  "catalog_id": "catalog.test_conductor-demo.local.v4",
+  "system_id": "test_conductor-demo",
+  "environment": "local",
+  "available_executors": ["procedure_playwright", "http_api", "database", "performance", "tcp_port"],
+  "http_operations": [
+    {
+      "operation_ref": "http.demo.health",
+      "description": "Read the local health endpoint",
+      "base_url_ref": "runtime.demo.http",
+      "method": "GET",
+      "path": "/health",
+      "state_effect": "read_only",
+      "observables": [
+        {
+          "observable_ref": "observable.http.demo-status",
+          "description": "HTTP status code",
+          "kind": "status"
+        }
+      ]
+    }
+  ],
+  "database_operations": [
+    {
+      "operation_ref": "db.demo.status",
+      "description": "Read the local service status row",
+      "connection_profile_ref": "runtime.demo.db",
+      "operation_kind": "query",
+      "execution_policy": "read_only",
+      "state_effect": "read_only",
+      "observables": [
+        {
+          "observable_ref": "observable.db.demo-status",
+          "description": "Service status value",
+          "kind": "column",
+          "column": "status"
+        }
+      ]
+    }
+  ],
+  "tcp_port_probes": [
+    {
+      "probe_ref": "port.demo.service",
+      "description": "Connect to the one explicitly registered local TCP service",
+      "host_ref": "runtime.demo.tcp",
+      "port": 1,
+      "timeout_seconds": 1.0,
+      "state_effect": "read_only",
+      "observables": [
+        {
+          "observable_ref": "observable.port.demo-state",
+          "description": "TCP connection state",
+          "kind": "state"
+        }
+      ]
+    }
+  ],
+  "performance_profiles": [
+    {
+      "profile_ref": "perf.demo.smoke",
+      "description": "Small local HTTP load profile for a smoke check",
+      "driver_ref": "driver.demo.http",
+      "state_effect": "read_only",
+      "max_duration_seconds": 5,
+      "max_virtual_users": 10,
+      "observables": [
+        {
+          "observable_ref": "observable.perf.demo-p95",
+          "description": "HTTP latency percentile",
+          "metric": "latency_ms",
+          "unit": "ms",
+          "percentile": "p95"
+        }
+      ]
+    }
+  ],
+  "procedure_profiles": [
+    {
+      "profile_ref": "procedure.demo.home",
+      "site": "demo.local",
+      "library_id": "site.demo.local",
+      "library_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "description": "Reviewed local home-page module catalog",
+      "operations": [
+        {
+          "operation_ref": "procedure.demo.open-home",
+          "page_ref": "page.demo.home",
+          "action": "Open the local demo home page",
+          "state_effect": "read_only",
+          "procedure_id": "demo.open-home",
+          "procedure_version": 1,
+          "procedure_fingerprint": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+        }
+      ],
+      "observables": [
+        {
+          "observable_ref": "observable.procedure.demo-ready",
+          "page_ref": "page.demo.home",
+          "description": "The page contains the Demo ready message"
+        }
+      ]
+    }
+  ],
+  "data_bindings": [
+    {
+      "binding_ref": "binding.perf.target",
+      "description": "Inject the local health endpoint into the load driver",
+      "executor_kind": "performance",
+      "operation_ref": "perf.demo.smoke",
+      "input_refs": {
+        "input.url": "runtime.demo.health_url"
+      }
+    }
+  ],
+  "cleanup_actions": []
+}
