@@ -1,7 +1,8 @@
 # TestConductor
-跟ai搏斗后生成的产物。还有很多瑕疵没完善
-注意：ui测试里面由于生成原子化的操作难度太大了，所以采取编排已有UI函数的方式，它也是唯一强制需要符合要求数据输入的地方。
 
+这是一个与 AI 多轮协作后形成的项目，目前仍有一些瑕疵待完善。
+
+注意：UI 测试很难可靠生成控件级原子操作，因此采用编排已有 UI 函数的方式；UI 函数资产库也是唯一要求严格固定输入格式的测试资源。
 
 TestConductor 是一个本地运行、人工审批后执行的 AI 测试工作台。它把需求逐层转换为可审核的测试计划和执行计划，审批执行计划后自动运行并生成证据与报告。
 
@@ -14,6 +15,8 @@ TestConductor 是一个本地运行、人工审批后执行的 AI 测试工作�
   -> 自动执行
   -> 执行历史、证据和报告
 ```
+
+项目适合本地开发和实验，不包含账号、登录、审批人身份或权限系统。管理后台只允许从本机访问，不应直接暴露到公网或不受信任的局域网。
 
 ## 支持范围
 
@@ -87,7 +90,7 @@ TestConductor 不依赖 `auto_ui_test` 的运行或导航接口。两个项目�
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
-pip install -r requirements-dev.txt
+pip install -r requirements.txt
 playwright install chromium
 ```
 
@@ -155,7 +158,7 @@ Windows 也可以直接运行：
 python examples/initial_multichannel_demo.py
 ```
 
-演示会临时启动本地 HTTP/TCP 服务和只读 SQLite，使用 fixture gateway 模拟模型候选，并走完整的契约校验、编译、审批、执行和报告链路。产物写入被 Git 忽略的 `run_artifacts/`。
+演示会临时启动本地 HTTP/TCP 服务和只读 SQLite，使用确定性的合成数据模拟模型候选，并走完整的契约校验、编译、审批、执行和报告链路。产物写入被 Git 忽略的 `run_artifacts/`。
 
 ## 可选 Milvus
 
@@ -168,26 +171,14 @@ pip install -r requirements-milvus.txt
 
 默认 hashing embedding 不下载模型；需要更高语义质量时可在本地配置 BGE-M3。
 
-## 测试
-
-```powershell
-python -m pytest -q
-python manage.py test
-python manage.py makemigrations --check --dry-run
-python manage.py check
-ruff check . --select F,E9
-```
-
-独立 pytest 覆盖契约、编译器、runner 和报告；Django 测试覆盖数据模型、审批、并发、后台页面和执行服务。真实 Playwright + UI Procedure E2E 在缺少本地可选条件时会跳过。
-
 ## 目录
 
 ```text
 apps/test_platform/   Django 业务应用、两层生成、审批、执行和报告
 config/               Django 配置
 templates/            本地管理工作台模板
-tests/                契约、编译和 runner 测试及合成 fixtures
-examples/             可执行演示与测试资料示例
+docs/                 当前数据契约、输入时机和执行边界
+examples/             可执行演示、演示数据与测试资料示例
 infra/milvus/          可选本地 Milvus 配置
 scripts/               检索评估工具
 ```

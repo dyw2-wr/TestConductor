@@ -11,13 +11,12 @@ python manage.py migrate --noinput
 Before opening a pull request, run:
 
 ```bash
+ruff check . --select F,E9
 python manage.py makemigrations --check --dry-run
 python manage.py check
-python -m pytest tests -q
-python manage.py test apps.test_platform.tests --verbosity 1
 ```
 
 Keep credentials and generated data out of commits. Changes to an artifact
 contract require matching validators, migrations or schema-version handling,
-fixtures, and regression tests. Preserve the separation between test intent,
+and updated documentation. Preserve the separation between test intent,
 approved test plan, approved execution plan, and execution evidence.

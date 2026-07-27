@@ -1,6 +1,6 @@
 """Run one reviewed intent through UI, API, DB, performance, and TCP artifacts.
 
-The two model boundaries use deterministic fixture gateways so the demo is
+The two model boundaries use deterministic demo-data gateways so the demo is
 repeatable without an API key.  They still go through the real prompts,
 Pydantic contracts, compilers, reviews, hash gates, runners, and evidence
 writer. UI produces a Procedure execution plan but is blocked because this demo
@@ -43,14 +43,14 @@ from apps.test_platform.runners.execution import ExecutionCoordinator
 from apps.test_platform.runners.performance_http import HttpPerformanceDriver
 from apps.test_platform.workflow import IntentToExecutionWorkflow
 
-FIXTURES = ROOT / "tests" / "fixtures_v4"
+DEMO_DATA = ROOT / "examples" / "demo_data"
 
 
-def _load_fixture(name: str) -> dict[str, Any]:
-    return json.loads((FIXTURES / name).read_text(encoding="utf-8"))
+def _load_demo_data(name: str) -> dict[str, Any]:
+    return json.loads((DEMO_DATA / name).read_text(encoding="utf-8"))
 
 
-class _FixtureGateway:
+class _DemoGateway:
     """Stand-in for an LLM; output still has to pass the production schema."""
 
     def __init__(self, payload: Mapping[str, Any]):
@@ -152,30 +152,29 @@ def _build_workflow() -> IntentToExecutionWorkflow:
     design_pipeline = TestDesignPipeline(
         DefaultDesignBuilder(
             DefaultDesignPromptBuilder(),
-            _FixtureGateway(
-                _load_fixture("multichannel_initial_design_candidate.json")
+            _DemoGateway(
+                _load_demo_data("multichannel_initial_design_candidate.json")
             ),
         )
     )
     compiler = TestPlanCompiler()
     plan_generator = PlanDraftGenerator(
         DefaultPlanPromptBuilder(),
-        _FixtureGateway(_load_fixture("multichannel_initial_plan_candidate.json")),
+        _DemoGateway(_load_demo_data("multichannel_initial_plan_candidate.json")),
         compiler,
     )
     return IntentToExecutionWorkflow(
         design_pipeline,
         plan_generator,
         plan_compiler=compiler,
-        # The deterministic example may run under a temporary directory or a
-        # Django test process. Production workflow instances use the default
-        # database recorder and the configured artifact storage root.
+        # The deterministic example writes only to its selected artifact root.
+        # Production workflow instances use the default database recorder.
         coordinator=ExecutionCoordinator(run_history_recorder=None),
     )
 
 
 def _catalog_for(environment: _DemoEnvironment) -> PlanningCatalogSnapshot:
-    payload = _load_fixture("multichannel_initial_catalog_content.json")
+    payload = _load_demo_data("multichannel_initial_catalog_content.json")
     payload["tcp_port_probes"][0]["port"] = environment.tcp_port
     return PlanningCatalogSnapshot.build(**payload)
 
@@ -192,7 +191,7 @@ def run_demo(output_root: Path | None = None) -> dict[str, Any]:
     root.mkdir(parents=True, exist_ok=True)
     workflow = _build_workflow()
     request = TestDesignRequest.model_validate(
-        _load_fixture("multichannel_initial_design_request.json")
+        _load_demo_data("multichannel_initial_design_request.json")
     )
     generated = workflow.generate_design(request)
     design_review = workflow.review_design(
@@ -266,7 +265,7 @@ def run_demo(output_root: Path | None = None) -> dict[str, Any]:
             }
         )
     result = {
-        "candidate_source": "deterministic_fixture_gateway",
+        "candidate_source": "deterministic_demo_gateway",
         "design_status": design_review.design.status.value,
         "plan_status": plan_review.plan.status.value,
         "overall_status": summary.status.value

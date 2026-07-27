@@ -3,6 +3,9 @@
 本文是第一层 `TestDesign.v4`、第二层 `TestPlan.v4` 和第三层执行交接的当前审计契约。
 旧版设计和兼容层已删除，本文只描述当前 v4 链路。
 
+产品界面名称与内部契约名称并不相同：用户提交“测试意图”，第一层 `TestDesign.v4` 显示为
+“测试计划”；第二层 `TestPlan.v4` 显示为“执行计划”。后文保留内部契约名，避免与代码字段混淆。
+
 ## 1. 为什么需要两次受审编译
 
 需求描述业务行为，执行器需要目标环境中的实现事实。模型可以理解自然语言并提出测试
@@ -343,18 +346,18 @@ Procedure 资产库、版本、指纹和本地 runner 状态
 
 两个页面都不能用“模型已经生成”代替人工决定，也不能在审核后允许原地修改已绑定 hash 的
 内容；修改必须生成新版本并重新校验、审核。generation/compilation result 在首次审核时被
-消费并更新状态，旧 draft 引用不能再次提交另一个决定。当前 ledger 仅为进程内 MVP；跨进程
-防重放、撤销与并发 CAS 必须由持久化审核存储提供。
+消费并更新状态，旧 draft 引用不能再次提交另一个决定。Django 产物状态和事务化审批服务负责
+持久化审核结果，并阻止同一版本被重复批准。
 
-## 12. 可执行 fixture
+## 12. 可执行演示数据
 
-`tests/fixtures_v4/` 提供：
+`examples/demo_data/` 提供离线多通道演示所需的合成数据：
 
 - 普通文本、混合编号、Markdown 表格和 JSON 文本四种 requirement 输入；
 - 登录锁定的 approved-design 输入与四 stage PlanCandidate；
 - API setup、账号创建、DB 验证和显式 cleanup 参数示例；
 - 同一 target 的 typed Catalog content。
 
-`tests/test_fixtures_v4.py` 不只解析 JSON：它通过真实第一层 pipeline 生成并审核 design bundle，
-再通过真实第二层 compiler 编译和校验全部 stage artifacts。fixture 不包含 API key、密码实际
-值、连接串或 SQL。
+`examples/initial_multichannel_demo.py` 会让这些数据通过真实第一层 pipeline、第二层 compiler、
+审批、执行器和报告链路。演示数据不包含 API key、密码实际值或连接串；其中 SQL 仅针对演示
+进程临时创建的只读 SQLite 数据库。

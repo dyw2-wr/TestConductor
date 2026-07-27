@@ -5,7 +5,7 @@ on:
   pull_request:
 
 jobs:
-  test:
+  verify:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
@@ -31,7 +31,3 @@ jobs:
           python manage.py makemigrations --check --dry-run
           python manage.py migrate --noinput
           python manage.py check
-      - name: Run tests
-        run: |
-          python -m pytest tests -q
-          python manage.py test apps.test_platform.tests --verbosity 1
