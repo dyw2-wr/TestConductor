@@ -19,7 +19,6 @@ from django.db import IntegrityError, transaction
 from django.utils import timezone
 
 from .intent.contracts import ApprovedTestDesignBundle
-from .intent.contracts import contains_secret_value
 from .input_contracts import validate_runtime_input
 from .models import ExecutionPlanArtifact, TestExecutionRun
 from .planning.catalogs import PlanningCatalogSnapshot
@@ -158,10 +157,7 @@ def queue_execution_plan_artifact(
 ) -> TestExecutionRun:
     """Validate, persist, and launch one background worker process."""
 
-    submitted = validate_runtime_input(artifact.execution_input)
-    submitted_payload = submitted.model_dump(mode="json", exclude_none=True)
-    if contains_secret_value(submitted_payload):
-        raise ValidationError("本次运行变量不能包含秘密值")
+    validate_runtime_input(artifact.execution_input)
     # Fail obvious approval/resource drift in the web request before recording a job.
     _validated_execution_inputs(artifact)
     artifact_root = _artifact_root(artifact)

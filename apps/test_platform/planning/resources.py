@@ -145,6 +145,7 @@ def _structured_if(field, predicate) -> dict[str, Any] | None:
 def _resource_source_hash(profile) -> str:
     digest = hashlib.sha256()
     for name in (
+        "ui_agent_asset_file",
         "api_openapi_file",
         "database_query_file",
         "performance_profile_file",
@@ -154,6 +155,7 @@ def _resource_source_hash(profile) -> str:
         if field:
             digest.update(_read_field_bytes(field, label="测试资源文件"))
     for name in (
+        "ui_agent_asset_text",
         "api_asset_text",
         "api_base_url",
         "database_asset_text",
@@ -484,12 +486,44 @@ def _compile_normalized_resources(
 ) -> tuple[
     list[dict[str, Any]],
     list[dict[str, Any]],
+    list[dict[str, Any]],
     dict[str, Any] | None,
     list[dict[str, Any]],
     dict[str, Any],
     dict[str, dict[str, str]],
 ]:
     """Assign stable refs and runtime bindings to the model's semantic draft."""
+
+    agent_ui_profiles: list[dict[str, Any]] = []
+    for index, item in enumerate(draft.agent_ui_profiles, start=1):
+        identity = f"{urlsplit(item.url).netloc}-{index}"
+        agent_ui_profiles.append(
+            {
+                "profile_ref": _safe_ref(identity, prefix="ui.agent.profile"),
+                "start_url": item.url,
+                "max_steps": item.max_steps,
+                "operations": [
+                    {
+                        "operation_ref": _safe_ref(
+                            f"{identity}-{feature_index}",
+                            prefix="ui.agent.operation",
+                        ),
+                        "description": feature,
+                        "state_effect": "unknown",
+                    }
+                    for feature_index, feature in enumerate(item.features, start=1)
+                ],
+                "observables": [
+                    {
+                        "observable_ref": _safe_ref(
+                            identity,
+                            prefix="ui.agent.observable",
+                        ),
+                        "description": "由网页 Agent 根据已审批 Check 判断页面结果",
+                    }
+                ],
+            }
+        )
 
     operations: list[dict[str, Any]] = []
     bindings: list[dict[str, Any]] = []
@@ -616,6 +650,7 @@ def _compile_normalized_resources(
     if performance_profiles:
         runtime["performance_profiles"] = runtime_profiles
     return (
+        agent_ui_profiles,
         operations,
         bindings,
         database_schema,
@@ -628,6 +663,17 @@ def _compile_normalized_resources(
 def _loose_resource_sources(profile) -> tuple[dict[str, str], dict[str, bool]]:
     sources: dict[str, str] = {}
     strict = {"api": False, "database": False, "performance": False}
+    ui_agent_parts: list[str] = []
+    ui_agent_text = str(getattr(profile, "ui_agent_asset_text", "") or "").strip()
+    ui_agent_file = getattr(profile, "ui_agent_asset_file", None)
+    if ui_agent_text:
+        if contains_secret_value(ui_agent_text):
+            raise ValueError("网页 Agent 测试资源说明包含疑似凭据实际值")
+        ui_agent_parts.append(ui_agent_text)
+    if ui_agent_file:
+        ui_agent_parts.append(_read_asset_text(ui_agent_file, label="网页 Agent 测试资源文件"))
+    if ui_agent_parts:
+        sources["ui_agent"] = "\n\n".join(ui_agent_parts)
     definitions = (
         (
             "api",
@@ -713,6 +759,7 @@ def validate_non_ui_resource_files(profile) -> None:
         "tcp_port_probes": [],
         "performance_profiles": [],
         "procedure_profiles": [],
+        "agent_ui_profiles": [],
         "data_bindings": [],
         "cleanup_actions": [],
     }
@@ -752,6 +799,7 @@ def validate_resource_source_inputs(profile) -> None:
         "tcp_port_probes": [],
         "performance_profiles": [],
         "procedure_profiles": [],
+        "agent_ui_profiles": [],
         "data_bindings": [],
         "cleanup_actions": [],
     }
@@ -799,6 +847,7 @@ def resolve_test_resources(
         "tcp_port_probes": [],
         "performance_profiles": [],
         "procedure_profiles": [],
+        "agent_ui_profiles": [],
         "data_bindings": [],
         "cleanup_actions": [],
     }
@@ -833,6 +882,7 @@ def resolve_test_resources(
             )
         draft = _normalized_draft(profile, model_sources, resource_model_gateway)
         (
+            agent_ui_profiles,
             operations,
             bindings,
             database_schema,
@@ -854,6 +904,9 @@ def resolve_test_resources(
         if "performance" in loose_sources:
             content["available_executors"].append("performance")
             content["performance_profiles"].extend(profiles)
+        if "ui_agent" in loose_sources:
+            content["available_executors"].append("stagehand_agent")
+            content["agent_ui_profiles"].extend(agent_ui_profiles)
         _merge_runtime(runtime, values)
     if strict_sources["performance"]:
         profiles, values = _resolve_performance(profile, api_performance_targets)

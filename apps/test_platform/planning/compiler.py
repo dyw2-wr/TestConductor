@@ -23,6 +23,9 @@ from .adapters import (
     TcpPortCompiler,
 )
 from .catalogs import (
+    AgentUiCapabilityProfile,
+    AgentUiObservable,
+    AgentUiOperation,
     LoadStage,
     ProcedureCapabilityProfile,
     ProcedureObservable,
@@ -38,6 +41,8 @@ from .catalogs import (
     TcpPortProbe,
 )
 from .contracts import (
+    AgentUiExecution,
+    AgentUiPlanRow,
     ApprovedTestPlanBundle,
     BoundAssertion,
     BoundData,
@@ -86,6 +91,7 @@ from .artifact_paths import artifact_category, generated_files_root
 
 EXECUTOR_CHANNEL = {
     ExecutorKind.PROCEDURE_PLAYWRIGHT: "ui",
+    ExecutorKind.STAGEHAND_AGENT: "ui",
     ExecutorKind.HTTP_API: "api",
     ExecutorKind.DATABASE: "database",
     ExecutorKind.PERFORMANCE: "performance",
@@ -133,6 +139,12 @@ class TestPlanCompiler:
             from .adapters.procedure import ProcedureStageCompiler
 
             adapter = ProcedureStageCompiler()
+            self._adapters[executor_kind] = adapter
+            return adapter
+        if executor_kind == ExecutorKind.STAGEHAND_AGENT:
+            from .adapters.agent_ui import AgentUiCompiler
+
+            adapter = AgentUiCompiler()
             self._adapters[executor_kind] = adapter
             return adapter
         raise ValueError(f"未登记 stage compiler: {executor_kind.value}")
@@ -529,6 +541,7 @@ class TestPlanCompiler:
             )
         resolver = {
             ExecutorKind.PROCEDURE_PLAYWRIGHT: self._resolve_procedure,
+            ExecutorKind.STAGEHAND_AGENT: self._resolve_agent_ui,
             ExecutorKind.HTTP_API: self._resolve_http,
             ExecutorKind.DATABASE: self._resolve_database,
             ExecutorKind.PERFORMANCE: self._resolve_performance,
@@ -536,6 +549,13 @@ class TestPlanCompiler:
         }[candidate.executor_kind]
         if candidate.executor_kind == ExecutorKind.PERFORMANCE:
             execution = resolver(scenario, units, catalog, candidate.performance_stages)
+        elif candidate.executor_kind == ExecutorKind.STAGEHAND_AGENT:
+            execution = resolver(
+                scenario,
+                units,
+                catalog,
+                candidate.agent_start_url,
+            )
         else:
             execution = resolver(scenario, units, catalog)
         return PlanStage(
@@ -586,6 +606,9 @@ class TestPlanCompiler:
         elif executor_kind == ExecutorKind.PROCEDURE_PLAYWRIGHT:
             resource = catalog.get_procedure_operation(catalog_ref)
             expected_type = ProcedureOperation
+        elif executor_kind == ExecutorKind.STAGEHAND_AGENT:
+            resource = catalog.get_agent_ui_operation(catalog_ref)
+            expected_type = AgentUiOperation
         elif executor_kind == ExecutorKind.TCP_PORT:
             resource = catalog.get_tcp_port_probe(catalog_ref)
             expected_type = TcpPortProbe
@@ -788,6 +811,63 @@ class TestPlanCompiler:
         if len(base_urls) != 1:
             raise ValueError("一个 HTTP stage 必须使用同一 base_url_ref")
         return HttpExecution(base_url_ref=base_urls.pop(), requests=requests)
+
+    def _resolve_agent_ui(
+        self,
+        scenario: LogicalScenario,
+        units: list[_ExecutionUnit],
+        catalog: PlanningCatalogSnapshot,
+        start_url: str | None,
+    ) -> AgentUiExecution:
+        rows: list[AgentUiPlanRow] = []
+        profiles: dict[str, AgentUiCapabilityProfile] = {}
+        for index, unit in enumerate(units, start=1):
+            operation = catalog.get_agent_ui_operation(unit.catalog_ref)
+            if not isinstance(operation, AgentUiOperation):
+                raise ValueError(
+                    f"Agent UI stage 引用了非 Agent UI operation: {unit.catalog_ref}"
+                )
+            profile = next(
+                (
+                    item
+                    for item in catalog.agent_ui_profiles
+                    if any(
+                        candidate.operation_ref == operation.operation_ref
+                        for candidate in item.operations
+                    )
+                ),
+                None,
+            )
+            if not isinstance(profile, AgentUiCapabilityProfile):
+                raise ValueError(f"Agent UI operation 没有所属 profile: {unit.catalog_ref}")
+            profiles[profile.profile_ref] = profile
+            allowed = {item.observable_ref: item for item in profile.observables}
+            assertions: list[BoundAssertion] = []
+            for selection in unit.assertions:
+                observable = allowed.get(selection.observable_ref)
+                if not isinstance(observable, AgentUiObservable):
+                    raise ValueError(
+                        f"observable {selection.observable_ref} 不属于 {profile.profile_ref}"
+                    )
+                assertions.append(self._assertion(scenario, selection, observable))
+            rows.append(
+                AgentUiPlanRow(
+                    row_id=f"AGENT-UI-{index:04d}",
+                    source=unit.source,
+                    operation_ref=operation.operation_ref,
+                    action=unit.action,
+                    assertions=assertions,
+                )
+            )
+        if len(profiles) != 1:
+            raise ValueError("一个 Agent UI stage 必须使用同一个资产 profile")
+        profile = next(iter(profiles.values()))
+        return AgentUiExecution(
+            capability_profile_ref=profile.profile_ref,
+            start_url=start_url or profile.start_url,
+            max_steps=profile.max_steps,
+            rows=rows,
+        )
 
     def _resolve_database(
         self, scenario: LogicalScenario, units: list[_ExecutionUnit], catalog

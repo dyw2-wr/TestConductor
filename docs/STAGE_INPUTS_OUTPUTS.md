@@ -10,14 +10,14 @@
 
 | 渠道 | 人工配置 | 系统使用方式 |
 | --- | --- | --- |
-| UI | 一个站点的 Procedure 资产库文件 | 第二层读取已发布 Procedure；第三层用本地 Playwright 顺序执行 |
+| UI | Procedure 资产库，或 URL/功能/最大步数资料 | 函数模式顺序执行 Procedure；Agent 模式用 Stagehand 探索页面 |
 | API | OpenAPI 或接口说明 + 精确基础地址 | 标准文件直接解析；宽松资料由模型整理 operation；第三层发 HTTP 请求 |
 | 数据库 | DDL/数据字典/表结构说明 + 连接引用 | 模型整理表/字段边界；第三层从安全运行环境解析连接 |
 | 性能 | 性能要求、历史方案或现有配置 | 模型整理目标、负载安全上限和指标；第三层从运行环境取得 driver |
 | 端口 | 单个主机和端口 | 第二层生成单点探测；第三层执行 TCP connect |
 
-敏感值和可执行 Python 对象只能由进程环境或
-`TEST_PLATFORM_RUNTIME_CONTEXT_FACTORY` 注入，不进入数据库、计划和报告。
+平台密钥、数据库连接和可执行 Python 对象只能由进程环境或
+`TEST_PLATFORM_RUNTIME_CONTEXT_FACTORY` 注入。被测网站测试账号可作为本次执行输入，不能进入复用资产或报告。
 
 `PlanningCatalogSnapshot` 仍然存在，但它是第二层每次生成计划时自动构建的内部快照，
 不是测试资源配置的人工输入。
@@ -62,6 +62,7 @@ ApprovedTestDesignBundle
 
 ```text
 Procedure 资产库     -> 单站点已发布 Procedure、参数契约、精确版本和 fingerprint
+网页 Agent 资料      -> URL、粗粒度功能和最大步数
 OpenAPI             -> 确定性导入 HTTP operation
 接口说明/文档        -> 模型整理 HTTP operation
 DDL/数据字典/表说明  -> 模型整理数据库方言、表、字段和运行参数
@@ -73,7 +74,7 @@ DDL/数据字典/表说明  -> 模型整理数据库方言、表、字段和运�
 
 | 分类 | 测试资源：当前允许边界 | 业务知识库：历史经验 | 测试意图/计划：本次内容 |
 | --- | --- | --- | --- |
-| UI | 当前选择的单站点 Procedure 资产库 | 已发布 Procedure 的说明和适用业务流程 | 本次 Procedure 顺序、输入与断言 |
+| UI | Procedure 库，或 Agent URL/功能/最大步数 | 可选页面业务经验 | 本次 Procedure 顺序，或 Agent Action/Check |
 | API | 当前接口资料、基础地址、整理后的 method/path/参数 | 历史兼容经验、调用惯例和故障模式 | 本次请求目的、数据与断言 |
 | 数据库 | 方言、连接引用、允许的表/字段/运行参数 | 历史 SQL、用途和适用条件 | 本次采用或生成的 SQL 与检查 |
 | 性能 | 可用 driver、负载上限和可采集指标 | 历史压测结果、瓶颈和调优经验 | 本次负载阶段、并发/SLA/阈值 |
@@ -102,12 +103,13 @@ DDL/数据字典/表说明  -> 模型整理数据库方言、表、字段和运�
 
 ### UI 执行专用边界
 
-- UI 操作必须映射到所选资产库中已发布的 Procedure，计划绑定精确 id、version 和 fingerprint。
+- 函数模式必须映射到已发布 Procedure，绑定精确 id、version 和 fingerprint。
+- Agent 模式必须映射到所选 URL/功能资产；最大步数只能来自资产。
 - TestConductor 不读取 auto_ui_test 的录制、Candidate、Repair、Navigation 或调用历史。
 - 一个资产库只对应一个网站；换网站时在测试资源配置中选择另一个 SQLite 文件。
 - `profile/secret/remember` 参数由 TestConductor RuntimeContext 按 `source_key` 解析；`input_data`
   参数必须由第二层生成明确 data binding，不会猜参数。
-- 初始 URL 来自首个 Procedure 的前置条件，不进入测试资源表或计划输入。
+- 函数模式初始 URL 来自 Procedure 前置条件；Agent 模式 URL 来自资产，测试计划明确 URL 时优先。
 - 计划审核摘要显示精确 Procedure 模块及版本；不存在模块时阻断，不让模型编造控件操作。
 
 第二层产物在产品界面中称为“执行计划”，意义是确认“用当前真实资源怎样测”。
@@ -119,7 +121,7 @@ DDL/数据字典/表说明  -> 模型整理数据库方言、表、字段和运�
 ```text
 ApprovedTestPlanBundle
 计划生成时冻结的 PlanningCatalogSnapshot
-从测试计划生成执行计划时冻结的非秘密变量
+从测试计划生成执行计划时冻结的本次变量
 当前测试资源配置
 进程环境注入的 secret、数据库连接、性能 driver、性能运行模式和 cleanup hook
 ```
@@ -127,8 +129,8 @@ ApprovedTestPlanBundle
 执行前比较源资料、Catalog 和运行配置 Hash。接口资料、数据库资料、性能资料、端口或 Procedure
 资产库发生变化时，旧计划不会继续执行，必须重新生成和审核。
 
-第三层不调用模型、不重新解释需求，也不重新规划。它只校验 Bundle/Artifact Hash，按顺序
-调用 UI Procedure、HTTP、数据库、性能和 TCP runner，执行 flow cleanup，保存证据和报告。
+第三层不重新解释需求或业务计划。普通 runner 确定性执行；Stagehand Agent 仅在已审批
+Action/Check 和资产最大步数内规划页面技术操作。系统随后保存证据和报告。
 
 ### 输出
 

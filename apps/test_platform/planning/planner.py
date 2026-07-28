@@ -63,6 +63,18 @@ def _catalog_selection_guide(catalog: PlanningCatalogSnapshot) -> dict[str, Any]
             for profile in catalog.procedure_profiles
             for operation in profile.operations
         ],
+        "stagehand_agent": [
+            {
+                "catalog_ref": operation.operation_ref,
+                "observable_refs": [
+                    value.observable_ref for value in profile.observables
+                ],
+                "asset_start_url": profile.start_url,
+                "asset_max_steps": profile.max_steps,
+            }
+            for profile in catalog.agent_ui_profiles
+            for operation in profile.operations
+        ],
     }
 
 
@@ -98,8 +110,6 @@ class DefaultPlanPromptBuilder:
             mode="json",
             exclude_none=True,
         )
-        if contains_secret_literal(json.dumps(frozen_input, ensure_ascii=False)):
-            raise ValueError("execution_input 不能包含凭据实际值")
         schema = PlanCandidate.model_json_schema()
         system = (
             "你是执行计划智能体。只输出符合给定 schema 的 JSON，不要输出解释。\n"
@@ -139,8 +149,11 @@ class DefaultPlanPromptBuilder:
             "找不到可执行引用、数据库结构不足、目标不匹配或信息不足时，不要猜测，"
             "ExpectedResultSelection.catalog_ref 必须取下面选择索引中的 catalog_ref，"
             "observable_ref 必须取同项 observable_refs；绝不能把 observable_ref 填进 catalog_ref。"
-            "UI operation 都是 Procedure 已发布模块；按业务操作逐项选择，并把同一场景的模块按"
-            "批准顺序放入同一个 procedure_playwright stage。不得编造控件级 Action/Check。"
+            "UI 函数模式的 operation 是已发布 Procedure；按业务操作逐项选择，并把同一场景的"
+            "模块按批准顺序放入同一个 procedure_playwright stage。使用 stagehand_agent 时，"
+            "把已审批的 UI Action/Check 映射到 Agent UI 资产能力，不得另造业务步骤或检查。"
+            "agent_start_url 只有在已审批 TestDesign 明确提供 URL 时才可填写，否则必须为 null 并使用"
+            "资产 start_url；max_steps 完全由资产拥有，候选计划不能填写或修改。"
             "本次冻结输入中的 variables 是审核人在生成执行计划前提供的非秘密值。所有 executor "
             "都可以据此选择 Catalog data binding；数据库 SQL 必须参数化并在 parameters_refs 中"
             "引用变量名，严禁把输入值直接拼入 SQL、URL、Procedure 或脚本。变量与 Catalog "
@@ -248,8 +261,6 @@ class PlanDraftGenerator:
             raise ValueError("第二层完整模型 messages 不能为空")
         if sum(len(message.content.encode("utf-8")) for message in messages) > 1024 * 1024:
             raise ValueError("第二层完整模型 messages 不能超过 1 MiB")
-        if any(contains_secret_literal(message.content) for message in messages):
-            raise ValueError("第二层完整模型 messages 疑似包含凭据实际值")
         try:
             candidate = self._candidate(messages)
             return self.compiler.build_draft(

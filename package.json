@@ -1,0 +1,8 @@
+{
+  "name": "test-conductor-stagehand-runner",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@browserbasehq/stagehand": "3.7.1"
+  }
+}

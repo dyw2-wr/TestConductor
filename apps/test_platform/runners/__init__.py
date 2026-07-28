@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from .base import DeferredRunner, ExecutorRunner
+from .agent_ui import AgentUiRunner
 from .procedure import ProcedureRunner
 from .contracts import (
     CleanupResult,
@@ -39,6 +40,7 @@ class RunnerRegistry:
         performance: ExecutorRunner | None = None,
         port: ExecutorRunner | None = None,
         procedure: ExecutorRunner | None = None,
+        agent_ui: ExecutorRunner | None = None,
     ):
         self._runners: dict[str, ExecutorRunner] = {
             "http_api": http or HttpRunner(),
@@ -46,6 +48,7 @@ class RunnerRegistry:
             "performance": performance or PerformanceRunner(),
             "tcp_port": port or PortRunner(),
             "procedure_playwright": procedure or ProcedureRunner(),
+            "stagehand_agent": agent_ui or AgentUiRunner(),
         }
 
     @property
@@ -99,6 +102,7 @@ class RunnerRegistry:
 
 
 __all__ = [
+    "AgentUiRunner",
     "DatabaseRunner",
     "ProcedureRunner",
     "CleanupResult",
