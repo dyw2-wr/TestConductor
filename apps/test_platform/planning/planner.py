@@ -1,4 +1,4 @@
-"""执行计划智能体入口。"""
+﻿"""执行计划智能体入口。"""
 
 from __future__ import annotations
 
@@ -52,16 +52,6 @@ def _catalog_selection_guide(catalog: PlanningCatalogSnapshot) -> dict[str, Any]
                 "observable_refs": [value.observable_ref for value in item.observables],
             }
             for item in catalog.performance_profiles
-        ],
-        "procedure_playwright": [
-            {
-                "catalog_ref": operation.operation_ref,
-                "observable_refs": [
-                    value.observable_ref for value in profile.observables
-                ],
-            }
-            for profile in catalog.procedure_profiles
-            for operation in profile.operations
         ],
         "stagehand_agent": [
             {
@@ -124,7 +114,7 @@ class DefaultPlanPromptBuilder:
             "所有 stage 联合且不重复覆盖 scenario.operations 和 expected_results；不要要求每个 "
             "stage 重复覆盖完整场景。operation_id/expected_result_id/data_id/required_state_id/"
             "cleanup_goal_id 只能引用第一层已有 ID。operation 和 expected 必须放入与其 "
-            "channel_hint 对应的 executor stage，procedure_playwright 对应 ui，tcp_port 对应 port。\n"
+            "channel_hint 对应的 executor stage，stagehand_agent 对应 ui，tcp_port 对应 port。\n"
             "expected_result 的 catalog_ref 是执行观察所需的 operation/profile，因此 UI 动作后"
             "允许在 database stage 选择只读查询进行验证。data binding.consumer_id 必须指向"
             "该 stage 的 operation_id、expected_result_id 或 setup required_state_id。\n"
@@ -149,14 +139,13 @@ class DefaultPlanPromptBuilder:
             "找不到可执行引用、数据库结构不足、目标不匹配或信息不足时，不要猜测，"
             "ExpectedResultSelection.catalog_ref 必须取下面选择索引中的 catalog_ref，"
             "observable_ref 必须取同项 observable_refs；绝不能把 observable_ref 填进 catalog_ref。"
-            "UI 函数模式的 operation 是已发布 Procedure；按业务操作逐项选择，并把同一场景的"
-            "模块按批准顺序放入同一个 procedure_playwright stage。使用 stagehand_agent 时，"
-            "把已审批的 UI Action/Check 映射到 Agent UI 资产能力，不得另造业务步骤或检查。"
+            "使用 stagehand_agent 时，把已审批的 UI Action/Check 映射到 Agent UI 资产能力，"
+            "不得另造业务步骤或检查。"
             "agent_start_url 只有在已审批 TestDesign 明确提供 URL 时才可填写，否则必须为 null 并使用"
             "资产 start_url；max_steps 完全由资产拥有，候选计划不能填写或修改。"
             "本次冻结输入中的 variables 是审核人在生成执行计划前提供的非秘密值。所有 executor "
             "都可以据此选择 Catalog data binding；数据库 SQL 必须参数化并在 parameters_refs 中"
-            "引用变量名，严禁把输入值直接拼入 SQL、URL、Procedure 或脚本。变量与 Catalog "
+            "引用变量名，严禁把输入值直接拼入 SQL、URL 或脚本。变量与 Catalog "
             "不匹配时提出 open_question，不得猜测。performance_mode 只决定执行模式，不得用它"
             "改写测试计划中的负载模型和阈值。"
             "请在 open_questions 中说明并允许 flows 为空。\n"
@@ -188,7 +177,11 @@ class DefaultPlanPromptBuilder:
             "已审核 TestDesign（第一层原始需求、知识和审核意见不会在此重新解释）：\n"
             + json.dumps(approved_design_input, ensure_ascii=False, indent=2)
             + "\n\n目标环境 PlanningCatalogSnapshot：\n"
-            + json.dumps(catalog.model_dump(mode="json"), ensure_ascii=False, indent=2)
+            + json.dumps(
+                catalog.model_dump(mode="json"),
+                ensure_ascii=False,
+                indent=2,
+            )
             + "\n\n严格选择索引（按 executor 分组，catalog_ref 与 observable_ref 不可互换）：\n"
             + json.dumps(_catalog_selection_guide(catalog), ensure_ascii=False, indent=2)
             + "\n\n已审核知识库中的过往 SQL 与作用说明（不包含时为空）：\n"

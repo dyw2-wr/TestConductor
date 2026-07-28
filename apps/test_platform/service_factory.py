@@ -1,4 +1,4 @@
-"""Django composition root for the v4 workflow.
+﻿"""Django composition root for the v4 workflow.
 
 Only process configuration is read here. API keys and runtime values are never
 stored in workflow rows, planning artifacts, or reports.
@@ -39,7 +39,7 @@ from .retrieval.milvus import (
     build_embedding_provider,
 )
 from .planning.planner import DefaultPlanPromptBuilder, PlanDraftGenerator
-from .runners import ProcedureRunner, ExecutionCoordinator, RunnerRegistry
+from .runners import ExecutionCoordinator, RunnerRegistry
 from .runners.contracts import RuntimeContext
 from .runners.performance_http import HttpPerformanceDriver
 from .run_history import get_default_run_history_recorder
@@ -331,7 +331,7 @@ def get_workflow(
     )
     planner = PlanDraftGenerator(DefaultPlanPromptBuilder(), planning_gateway)
     coordinator = ExecutionCoordinator(
-        RunnerRegistry(procedure=ProcedureRunner()),
+        RunnerRegistry(),
         run_history_recorder=get_default_run_history_recorder(),
     )
     return IntentToExecutionWorkflow(pipeline, planner, coordinator=coordinator)
@@ -351,9 +351,6 @@ _RUNTIME_MAPPING_FIELDS = frozenset(
 )
 _RUNTIME_SCALAR_FIELDS = frozenset(
     {
-        "procedure_asset_database",
-        "procedure_library_id",
-        "procedure_library_hash",
         "ui_browser_headless",
         "performance_mode",
         "max_response_bytes",

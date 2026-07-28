@@ -1,7 +1,6 @@
-# 网页 Agent UI 执行
+﻿# 网页 Agent UI 执行
 
-网页 UI 有两种互斥执行方式：函数编排和网页 Agent。函数编排继续读取一个网站的
-Procedure SQLite 资产库；网页 Agent 不读取该数据库。
+网页 UI 只保留网页 Agent 执行方式，不读取函数编排或沉淀资产。
 
 网页 Agent 资产只描述粗粒度边界：绝对 HTTP(S) URL、页面或功能说明、最大步数。
 可以上传常见文档，也可以直接填写文字。不要在资产中维护控件步骤、变量、账号密码、
@@ -13,7 +12,7 @@ Procedure SQLite 资产库；网页 Agent 不读取该数据库。
 
 执行计划审批通过后立即由本地 Stagehand 执行。Runner 保存实际动作、最终 URL、结果、
 失败原因和最终或失败截图，不保存模型推理、页面正文或运行变量。首版不启用搜索、缓存、
-自愈知识、向量库、自动转 Procedure、多智能体、移动端或 Browserbase。
+自愈知识、向量库、多智能体、移动端或 Browserbase。
 
 运行前执行 `npm install`，并按 `STAGEHAND_MODEL` 所选提供商设置模型密钥。默认模型是
 `openai/gpt-4.1-mini`，对应 `OPENAI_API_KEY`。也可以使用 `STAGEHAND_API_KEY` 和

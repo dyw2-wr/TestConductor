@@ -1,4 +1,4 @@
-"""Lightweight HTTP entry points for the new test-platform boundary.
+﻿"""Lightweight HTTP entry points for the new test-platform boundary.
 
 The intent pipeline itself remains an application service. These endpoints are
 deliberately limited to health/version discovery until the authenticated
@@ -103,7 +103,6 @@ def uploaded_file(request, path_ref: str):
     resource_match = any(
         TestResourceProfile.objects.filter(**{field_name: value}).exists()
         for field_name in (
-            "ui_procedure_database",
             "api_openapi_file",
             "database_query_file",
             "performance_profile_file",
@@ -174,7 +173,7 @@ def version(request):
                 "tcp_port",
                 "stagehand_agent",
             ],
-            "external_executors": ["procedure_playwright"],
+            "external_executors": [],
             "deferred_executors": [],
         }
     )

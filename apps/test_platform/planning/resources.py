@@ -1,4 +1,4 @@
-"""Resolve simple test-resource inputs into the layer-two planning snapshot.
+﻿"""Resolve simple test-resource inputs into the layer-two planning snapshot.
 
 Users configure real resources.  This module is the only boundary that turns
 those inputs into ``PlanningCatalogSnapshot`` references.  It does not approve a
@@ -27,8 +27,6 @@ from apps.test_platform.ingestion.contracts import (
     IngestionLimits,
     InputFile,
 )
-from apps.test_platform.ui_modules import UiModuleCatalog, UiModuleCatalogError
-
 from .catalogs import PlanningCatalogSnapshot
 from .resource_normalization import (
     NormalizedResourceDraft,
@@ -165,101 +163,6 @@ def _resource_source_hash(profile) -> str:
         digest.update(name.encode("ascii"))
         digest.update(str(getattr(profile, name, "") or "").strip().encode("utf-8"))
     return "sha256:" + digest.hexdigest()
-
-
-def _design_expected(bundle: ApprovedTestDesignBundle, channel: str):
-    for scenario in bundle.design.scenarios:
-        for expected in scenario.expected_results:
-            if expected.channel_hint.value == channel:
-                yield scenario, expected
-
-
-def _stored_file_path(field, *, label: str) -> str:
-    try:
-        return str(field.path)
-    except (AttributeError, NotImplementedError, ValueError) as exc:
-        raise ValueError(f"{label}必须保存在本地文件存储中") from exc
-
-
-def _resolve_ui(profile, bundle):
-    database_path = _stored_file_path(
-        profile.ui_procedure_database,
-        label="沉淀资产库",
-    )
-    try:
-        module_catalog = UiModuleCatalog.from_asset_database(database_path)
-    except UiModuleCatalogError as exc:
-        raise ValueError(str(exc)) from exc
-    operations: list[dict[str, Any]] = []
-    observables: list[dict[str, Any]] = []
-    bindings: list[dict[str, Any]] = []
-    for _, expected in _design_expected(bundle, "ui"):
-        observables.append(
-            {
-                "observable_ref": _safe_ref(
-                    expected.expected_result_id,
-                    prefix="ui.observable",
-                ),
-                "page_ref": "page.runtime",
-                "description": expected.text,
-            }
-        )
-
-    for procedure in module_catalog.modules:
-        operation_ref = _safe_ref(procedure.ref, prefix="ui.procedure")
-        allowed_binding_refs: list[str] = []
-        for parameter in procedure.parameters:
-            if parameter["source"] != "input_data":
-                continue
-            binding_ref = _safe_ref(
-                f"{procedure.ref}.{parameter['name']}",
-                prefix="ui.binding",
-            )
-            allowed_binding_refs.append(binding_ref)
-            bindings.append(
-                {
-                    "binding_ref": binding_ref,
-                    "description": (
-                        f"{procedure.description} 的 {parameter['name']} 输入"
-                    ),
-                    "executor_kind": "procedure_playwright",
-                    "operation_ref": operation_ref,
-                    "input_refs": {
-                        f"input.{parameter['name']}": parameter["source_key"]
-                    },
-                }
-            )
-        operations.append(
-            {
-                "operation_ref": operation_ref,
-                "page_ref": "page.runtime",
-                "action": procedure.description,
-                "state_effect": "unknown",
-                "procedure_id": procedure.procedure_id,
-                "procedure_version": procedure.version,
-                "procedure_fingerprint": f"sha256:{procedure.fingerprint}",
-                "procedure_parameters": [dict(item) for item in procedure.parameters],
-                "allowed_binding_refs": allowed_binding_refs,
-            }
-        )
-    if not operations:
-        raise ValueError("审核后的测试意图没有可转换的 UI 操作")
-
-    result = {
-        "profile_ref": _safe_ref(profile.profile_id, prefix="ui.profile"),
-        "site": module_catalog.site,
-        "library_id": module_catalog.library_id,
-        "library_hash": f"sha256:{module_catalog.library_hash}",
-        "description": f"{profile.name} 的沉淀资产",
-        "operations": operations,
-        "observables": observables,
-    }
-    runtime = {
-        "procedure_asset_database": database_path,
-        "procedure_library_id": module_catalog.library_id,
-        "procedure_library_hash": module_catalog.library_hash,
-    }
-    return result, bindings, runtime
 
 
 def _resolve_api(profile):
@@ -758,7 +661,6 @@ def validate_non_ui_resource_files(profile) -> None:
         "database_schema": None,
         "tcp_port_probes": [],
         "performance_profiles": [],
-        "procedure_profiles": [],
         "agent_ui_profiles": [],
         "data_bindings": [],
         "cleanup_actions": [],
@@ -798,7 +700,6 @@ def validate_resource_source_inputs(profile) -> None:
         "database_schema": None,
         "tcp_port_probes": [],
         "performance_profiles": [],
-        "procedure_profiles": [],
         "agent_ui_profiles": [],
         "data_bindings": [],
         "cleanup_actions": [],
@@ -827,7 +728,6 @@ def resolve_test_resources(
     profile,
     design_bundle: ApprovedTestDesignBundle,
     *,
-    procedure_client: Any | None = None,
     resource_model_gateway: Any | None = None,
 ) -> ResolvedTestResources:
     """Create the exact resource snapshot consumed by layer two."""
@@ -846,7 +746,6 @@ def resolve_test_resources(
         "database_schema": None,
         "tcp_port_probes": [],
         "performance_profiles": [],
-        "procedure_profiles": [],
         "agent_ui_profiles": [],
         "data_bindings": [],
         "cleanup_actions": [],
@@ -854,12 +753,6 @@ def resolve_test_resources(
     runtime: dict[str, Any] = {}
     api_performance_targets: dict[str, dict[str, str]] = {}
     loose_sources, strict_sources = _loose_resource_sources(profile)
-    if profile.ui_procedure_database:
-        ui_profile, bindings, values = _resolve_ui(profile, design_bundle)
-        content["available_executors"].append("procedure_playwright")
-        content["procedure_profiles"].append(ui_profile)
-        content["data_bindings"].extend(bindings)
-        _merge_runtime(runtime, values)
     if strict_sources["api"]:
         operations, bindings, values, api_performance_targets = _resolve_api(profile)
         content["available_executors"].append("http_api")

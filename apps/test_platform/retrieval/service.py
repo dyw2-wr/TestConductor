@@ -1,4 +1,4 @@
-"""Policy enforcement and exact-source verification for retrieval results."""
+﻿"""Policy enforcement and exact-source verification for retrieval results."""
 
 from __future__ import annotations
 
@@ -20,7 +20,6 @@ class RetrievalIntegrityError(RuntimeError):
 
 _ALLOWED_STATUS = {
     "approved_knowledge": frozenset({"approved"}),
-    "procedure": frozenset({"published"}),
     "repair_memory": frozenset({"approved"}),
 }
 

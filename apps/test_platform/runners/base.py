@@ -1,7 +1,7 @@
-"""第三层 runner 的公共门禁和生命周期工具。
+﻿"""第三层 runner 的公共门禁和生命周期工具。
 
-本模块故意不导入 procedure。它只验证第二层交接包引用的相对文件和字节 hash，然后把
-JSON payload 交给具体 runner。任何 hash、版本或路径不匹配都会在执行前返回
+本模块只验证第二层交接包引用的相对文件和字节 hash，然后把 JSON payload
+交给具体 runner。任何 hash、版本或路径不匹配都会在执行前返回
 ``blocked``，不打开目标系统、数据库或性能 driver。
 """
 
@@ -28,7 +28,7 @@ from .contracts import (
 
 
 class ExecutorRunner(Protocol):
-    """内部 runner 的最小接口；ProcedureRunner 额外接收 correlation。"""
+    """内部 runner 的最小接口。"""
 
     executor_kind: str
 

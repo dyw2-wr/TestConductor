@@ -1,4 +1,4 @@
-"""注入式性能执行器（不启动 Procedure 或外部压测进程）。
+﻿"""注入式性能执行器（不启动外部压测进程）。
 
 第三层只接受第二层生成的 ``performance-execution-plan.v4``。``dry_run`` 只做
 结构和配额预检，不调用 driver；``live`` 必须显式注入 driver。driver 返回已经

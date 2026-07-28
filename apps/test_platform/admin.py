@@ -1,4 +1,4 @@
-import json
+﻿import json
 import copy
 import mimetypes
 from pathlib import Path
@@ -67,14 +67,13 @@ TECHNIQUE_LABELS = {
     "random": "随机组合",
 }
 EXECUTOR_CATEGORY = {
-    "procedure_playwright": "ui",
     "stagehand_agent": "ui",
     "http_api": "api",
     "database": "database",
     "performance": "performance",
     "tcp_port": "port",
 }
-UI_EXECUTOR_KINDS = frozenset({"procedure_playwright", "stagehand_agent"})
+UI_EXECUTOR_KINDS = frozenset({"stagehand_agent"})
 
 
 def _approved_knowledge_catalog():
@@ -725,15 +724,6 @@ class TestResourceProfileForm(forms.ModelForm):
         label="本配置包含的测试能力（可多选）",
         help_text="复合测试请一次勾选全部所需能力；它们共同属于同一个被测系统。",
     )
-    ui_execution_mode = forms.ChoiceField(
-        choices=(
-            ("procedure", "函数编排"),
-            ("agent", "网页 Agent"),
-        ),
-        widget=forms.RadioSelect,
-        required=False,
-        label="UI 执行方式",
-    )
     api_base_url = forms.URLField(
         required=False,
         assume_scheme="https",
@@ -756,10 +746,6 @@ class TestResourceProfileForm(forms.ModelForm):
         self.fields["system_id"].required = True
         friendly_fields = {
             "system_id": ("被测系统", "填写团队日常使用的系统名称或简称。"),
-            "ui_procedure_database": (
-                "UI 函数资产库",
-                "上传一个网站对应的 SQLite 文件，例如 127.0.0.1.sqlite。",
-            ),
             "ui_agent_asset_file": (
                 "网页 Agent 资料文件（可选）",
                 "上传包含 URL、功能和最大步数的表格或常见文本文件。",
@@ -804,15 +790,10 @@ class TestResourceProfileForm(forms.ModelForm):
             self.initial["resource_types"] = sorted(
                 self.instance.configured_channels()
             )
-            if self.instance.ui_procedure_database:
-                self.initial["ui_execution_mode"] = "procedure"
-            elif self.instance.ui_agent_asset_file or self.instance.ui_agent_asset_text.strip():
-                self.initial["ui_execution_mode"] = "agent"
 
     def clean(self):
         cleaned = super().clean()
         selected = set(cleaned.get("resource_types") or [])
-        ui_mode = str(cleaned.get("ui_execution_mode") or "")
         if cleaned.get("ui_agent_asset_file") and str(
             cleaned.get("ui_agent_asset_text") or ""
         ).strip():
@@ -824,14 +805,10 @@ class TestResourceProfileForm(forms.ModelForm):
         ):
             if cleaned.get(file_name) and str(cleaned.get(text_name) or "").strip():
                 self.add_error(text_name, f"{label}文件和文字说明选择一种即可")
-        ui_complete = (
-            ui_mode == "procedure" and bool(cleaned.get("ui_procedure_database"))
-        ) or (
-            ui_mode == "agent"
-            and bool(cleaned.get("ui_agent_asset_file") or str(cleaned.get("ui_agent_asset_text") or "").strip())
+        ui_complete = bool(
+            cleaned.get("ui_agent_asset_file")
+            or str(cleaned.get("ui_agent_asset_text") or "").strip()
         )
-        if "ui" in selected and not ui_mode:
-            self.add_error("ui_execution_mode", "请选择 UI 执行方式")
         complete = {
             "ui": ui_complete,
             "api": bool(
@@ -889,10 +866,8 @@ class TestResourceProfileForm(forms.ModelForm):
     def save(self, commit=True):
         instance = super().save(commit=False)
         selected = set(self.cleaned_data.get("resource_types") or [])
-        ui_mode = str(self.cleaned_data.get("ui_execution_mode") or "")
         category_fields = {
             "ui": (
-                "ui_procedure_database",
                 "ui_agent_asset_file",
                 "ui_agent_asset_text",
             ),
@@ -910,12 +885,6 @@ class TestResourceProfileForm(forms.ModelForm):
                 continue
             for field_name in fields:
                 setattr(instance, field_name, None if field_name == "port_number" else "")
-        if "ui" in selected:
-            if ui_mode == "procedure":
-                instance.ui_agent_asset_file = ""
-                instance.ui_agent_asset_text = ""
-            elif ui_mode == "agent":
-                instance.ui_procedure_database = ""
         if commit:
             instance.save()
         return instance
@@ -1315,12 +1284,6 @@ def _expected_line(item: dict) -> str:
 
 def _assertion_line(assertion: dict) -> str:
     kind = assertion.get("kind") or "assert"
-    if (
-        kind == "procedure"
-        and assertion.get("operator") is None
-        and assertion.get("expected") is None
-    ):
-        return "检查 " + str(assertion.get("statement") or "模块检查点")
     subject = (
         assertion.get("path")
         or assertion.get("name")
@@ -1346,9 +1309,6 @@ def _stage_resources(stage: dict) -> list[str]:
             lines.append(f"Action: {row.get('action') or row.get('operation_ref') or '-'}")
             for assertion in row.get("assertions", []):
                 lines.append("Check: " + _assertion_line(assertion))
-        procedure_refs = execution.get("procedure_refs") or []
-        if procedure_refs:
-            lines.append("UI 函数: " + ", ".join(str(item) for item in procedure_refs))
         return lines
     if kind == "http_api":
         lines = [f"{stage.get('order', '?')}. 接口测试"]
@@ -1400,7 +1360,7 @@ def _stage_has_operations(stage: dict) -> bool:
     execution = (stage or {}).get("execution") or {}
     kind = str(stage.get("executor_kind") or execution.get("kind") or "")
     if kind in UI_EXECUTOR_KINDS:
-        return bool(execution.get("rows") or execution.get("procedure_refs"))
+        return bool(execution.get("rows"))
     collection_by_kind = {
         "http_api": "requests",
         "database": "operations",
@@ -1628,21 +1588,12 @@ class TestResourceProfileAdmin(SingleRecordActionAdmin, admin.ModelAdmin):
                 {
                     "classes": ("resource-section", "resource-ui"),
                     "description": mark_safe(
-                        '<div class="tb-resource-guide"><p><strong>函数编排：</strong>每个网站一个 SQLite 文件。'
-                        '库级数据包含 library_id、site、schema 版本、发布时间和整库 hash；'
-                        '每个当前激活的 UI 函数包含 procedure_id、version、description、parameters、'
-                        '完整 ProcedureV1 payload 和 fingerprint。payload 内含前置页面、分段操作、完成检查、'
-                        '后置检查、可用执行后端、来源和验证信息，不包含导航、录制过程、Repair 经验或调用历史。</p>'
-                        '<p><strong>示例：</strong><code>local.workflow.login@v2</code>；参数 username 来自 profile、'
-                        'password 来自 secret；操作依次为输入用户名、输入密码、选择角色、点击登录；'
-                        '完成与后置检查均验证登录成功提示可见。</p>'
-                        '<p><strong>网页 Agent：</strong>文件或文字只包含 URL、页面/功能和最大步数。'
+                        '<div class="tb-resource-guide"><p><strong>网页 Agent：</strong>'
+                        '文件或文字只包含 URL、页面/功能和最大步数。'
                         '例如：<code>https://shop.example.test | 商品购物车 | 20</code>。'
                         '不要填写控件步骤、所需变量、账号密码或执行历史。</p></div>'
                     ),
                     "fields": (
-                        "ui_execution_mode",
-                        "ui_procedure_database",
                         "ui_agent_asset_file",
                         "ui_agent_asset_text",
                     ),
@@ -3088,11 +3039,10 @@ class ExecutionPlanArtifactAdmin(
             format_html_join("", "{}", ((item,) for item in sections)),
         )
 
-    @admin.display(description="UI 沉淀资产来源")
+    @admin.display(description="网页 Agent 资产来源")
     def page_execution_basis(self, obj):
-        """Show Procedures frozen from the selected asset database."""
+        """Show the Agent UI content frozen into this approved plan."""
 
-        profiles = (obj.catalog_snapshot or {}).get("procedure_profiles") or []
         agent_profiles = (obj.catalog_snapshot or {}).get("agent_ui_profiles") or []
         if agent_profiles:
             plan = (getattr(obj, "compilation_result", None) or {}).get("plan") or {}
@@ -3128,69 +3078,7 @@ class ExecutionPlanArtifactAdmin(
                     "<div class='tb-knowledge-list'>{}</div></details>",
                     format_html_join("", "{}", ((card,) for card in cards)),
                 )
-        if not profiles:
-            return "本计划不包含页面操作"
-
-        plan = (getattr(obj, "compilation_result", None) or {}).get("plan") or {}
-        used_operation_refs = set()
-        used_procedure_refs = set()
-        for flow in plan.get("flows") or []:
-            for stage in flow.get("stages") or []:
-                execution = stage.get("execution") or {}
-                if execution.get("kind") not in UI_EXECUTOR_KINDS:
-                    continue
-                used_procedure_refs.update(execution.get("procedure_refs") or [])
-                used_operation_refs.update(
-                    str(row.get("operation_ref") or "").strip()
-                    for row in execution.get("rows") or []
-                    if str(row.get("operation_ref") or "").strip()
-                )
-
-        cards = []
-        for profile in profiles:
-            operation_rows = []
-            for item in profile.get("operations") or []:
-                operation_ref = str(item.get("operation_ref") or "").strip()
-                procedure_ref = (
-                    f"{item.get('procedure_id')}@v{item.get('procedure_version')}"
-                    if item.get("procedure_id") and item.get("procedure_version")
-                    else ""
-                )
-                if (
-                    operation_ref not in used_operation_refs
-                    and procedure_ref not in used_procedure_refs
-                ):
-                    continue
-                action = str(item.get("action") or "").strip()
-                if action:
-                    operation_rows.append(
-                        f"{item.get('procedure_id')}@v{item.get('procedure_version')}：{action}"
-                    )
-            operation_summary = (
-                format_html_join("", "<li>{}</li>", ((item,) for item in operation_rows))
-                if operation_rows
-                else format_html(
-                    "<li class='tb-capability-warning'>本次计划未引用沉淀资产。</li>"
-                )
-            )
-            cards.append(
-                format_html(
-                    "<section class='tb-capability-card'>"
-                    "<h4>{}</h4>"
-                    "<p>资产库：{}<br>内容 Hash：{}</p>"
-                    "<div><strong>本次引用的 Procedure</strong><ul>{}</ul></div>"
-                    "</section>",
-                    profile.get("site") or "UI 沉淀资产",
-                    profile.get("library_id") or "-",
-                    profile.get("library_hash") or "-",
-                    operation_summary,
-                )
-            )
-        return format_html(
-            "<details class='tb-capability-source'><summary>查看 UI 沉淀资产</summary>"
-            "<div class='tb-knowledge-list'>{}</div></details>",
-            format_html_join("", "{}", ((card,) for card in cards)),
-        )
+        return "本计划不包含页面操作"
 
     @admin.display(description="规则校验")
     def validation_summary(self, obj):
@@ -3337,21 +3225,6 @@ class ExecutionPlanArtifactAdmin(
                 for assertion in item.get("assertions") or []:
                     statement = assertion.get("statement") or "页面检查"
                     lines.append(f"check_{index} = verify({quoted(statement)})")
-        elif kind == "procedure_playwright":
-            for index, item in enumerate(execution.get("rows") or [], start=1):
-                procedure = (
-                    f"{item.get('procedure_id')}@v{item.get('procedure_version')}"
-                    if item.get("procedure_id") and item.get("procedure_version")
-                    else item.get("operation_ref")
-                )
-                lines.append(
-                    f"step_{index} = run_ui_procedure("
-                    f"{quoted(procedure)}, input={quoted(item.get('input_data') or {})})"
-                )
-                for assertion in item.get("assertions") or []:
-                    lines.append(
-                        assertion_line(assertion, f"step_{index}.checkpoint")
-                    )
         elif kind == "http_api":
             for index, item in enumerate(execution.get("requests") or [], start=1):
                 lines.append(
@@ -3461,23 +3334,6 @@ class ExecutionPlanArtifactAdmin(
                             cls._assertion_text(value)
                             for value in item.get("assertions") or []
                         ) or "无独立检查",
-                    ]
-                )
-        elif kind == "procedure_playwright":
-            headers = ["步骤", "页面操作", "输入", "检查"]
-            for index, item in enumerate(execution.get("rows") or [], start=1):
-                checks = [
-                    cls._assertion_text(value)
-                    for value in item.get("assertions") or []
-                ]
-                if item.get("checkpoint"):
-                    checks.insert(0, str(item.get("checkpoint")))
-                rows.append(
-                    [
-                        index,
-                        item.get("action") or item.get("operation_ref") or "-",
-                        item.get("input_data") or "无",
-                        "；".join(checks) or "无",
                     ]
                 )
         elif kind == "http_api":

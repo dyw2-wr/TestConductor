@@ -1,4 +1,4 @@
-# TestConductor v4：从测试设计到线性执行计划
+﻿# TestConductor v4：从测试设计到线性执行计划
 
 本文是第一层 `TestDesign.v4`、第二层 `TestPlan.v4` 和第三层执行交接的当前审计契约。
 旧版设计和兼容层已删除，本文只描述当前 v4 链路。
@@ -40,7 +40,7 @@ flowchart LR
 | 第一层模型 | 输入快照对应的原文、选择和 approved knowledge | 语义归类、测试技术扩展、逻辑场景设计 | `TestDesignCandidate` |
 | 第一层系统 | candidate + request | 生成领域 ID，把 1-based 索引编译为稳定引用 | draft `TestDesign.v4` |
 | 第一层审核 | design + input snapshot + validation | 人工核对原文支持、推导、状态影响和 cleanup | `ApprovedTestDesignBundle.v4` |
-| 第二层输入 | approved design + 测试资源配置 | 精确读取 Procedure/正式格式；由模型整理宽松接口、数据库和性能资料；统一生成 Catalog | 锁定的 planning 上下文 |
+| 第二层输入 | approved design + 测试资源配置 | 精确读取正式格式；由模型整理网页 Agent、宽松接口、数据库和性能资料；统一生成 Catalog | 锁定的 planning 上下文 |
 | 第二层模型 | approved design 投影 + Catalog 投影 | 生成资源约束内的 ref、数据绑定、SQL 草稿、性能阶段和 stage 顺序 | `PlanCandidate` |
 | 第二层系统 | candidate + approved bundle + Catalog | 生成 flow/stage ID，解析 typed execution，编译 provisional artifacts | draft `TestPlan.v4` + artifacts |
 | 第二层审核 | plan + validation + artifact set | 人工核对映射、顺序、参数和最终产物 | `ApprovedTestPlanBundle.v4` |
@@ -134,7 +134,7 @@ question_id
 ```text
 HTTP operation: method/path/base_url_ref/state_effect/observables
 Database operation: read-only query ref/connection ref/observables
-Procedure profile: site/entry point/published Procedure modules/observables
+Agent UI profile: start_url/max_steps/operations/observables
 Performance profile: driver/load stages/metrics
 DataBinding: executor + operation/profile + input slot -> runtime variable ref
 CleanupAction: handler/policy/required_data_slots/always_run/evidence_required
@@ -164,8 +164,8 @@ open_questions[]
 
 模型不输出 plan ID、flow ID、stage ID、未登记的 HTTP 地址、locator、driver、凭据、
 cleanup handler 或 variable ref。数据库 SQL 和性能负载阶段由模型生成并接受人工审批及
-确定性资源校验；其余实现字段由 Catalog 投影，所有系统 ID 都由 compiler 生成。UI 仍只
-允许编排已发布 Procedure。
+确定性资源校验；其余实现字段由 Catalog 投影，所有系统 ID 都由 compiler 生成。UI 只能
+映射到已登记的 Agent 资产，并忠实保留已审批 Action/Check。
 
 ## 6. 线性 Flow 和单 Executor Stage
 
@@ -175,24 +175,24 @@ cleanup handler 或 variable ref。数据库 SQL 和性能负载阶段由模型�
 当前 channel 路由为：
 
 ```text
-ui          -> procedure_playwright
+ui          -> stagehand_agent
 api         -> http_api
 database    -> database
 performance -> performance
 port        -> tcp_port
 ```
 
-这是 `channel -> executor` 映射。Procedure 只是当前 UI 实现，未来 UI 可以增加其他 executor；
-API、数据库和压力测试始终有独立 artifact/runner。端口测试也有独立 artifact/runner；
+这是 `channel -> executor` 映射。API、数据库和压力测试始终有独立 artifact/runner。
+端口测试也有独立 artifact/runner；
 `tcp_port` 的 Catalog probe 固定一个 `host_ref + port + timeout_seconds`，模型只能选择
 probe/observable 引用，不提供 nmap 或任意端口范围扫描。
 
 跨渠道场景按真实职责排列，例如：
 
 ```text
-STAGE-0001  ui/procedure_playwright  第 4 次提交错误密码
+STAGE-0001  ui/stagehand_agent  第 4 次提交错误密码
 STAGE-0002  database           观察 locked == false
-STAGE-0003  ui/procedure_playwright  第 5 次提交错误密码
+STAGE-0003  ui/stagehand_agent  第 5 次提交错误密码
 STAGE-0004  database           观察 locked == true
 finally     flow cleanup       恢复账号
 ```
@@ -295,25 +295,20 @@ manifest 的 `artifact_refs` 只列编译 payload，payload hash 放在
 - `tcp_port`：`tcp-port-execution-plan.v4`，每个 probe 只探测一个已登记端点；运行时
   从 `RuntimeContext.network_hosts` 解析 `host_ref`，支持 `state(open/closed/filtered)` 和
   `connect_latency_ms` 结构化断言；明确超时不会伪装成 closed。
-- `procedure_playwright`：生成用于人工审核的 `WorkbookV2` 和权威 sidecar manifest。每行必须
-  引用所选 SQLite 资产库中的一个已发布 Procedure；manifest 冻结库 hash、Procedure 版本、
-  指纹、参数绑定和断言。TestConductor 从同一资产库加载动作 payload，在本地 Playwright 会话中
-  按审核顺序执行。locator 和控件级动作不由计划模型生成。
+- `stagehand_agent`：生成 Agent UI 执行 JSON 和权威 sidecar manifest，冻结起始 URL、
+  最大步数以及已审批 Action/Check。Stagehand 只在这些边界内规划页面技术操作。
 
-## 10. UI Procedure 的执行边界
+## 10. 网页 Agent 的执行边界
 
-TestConductor 确定性编译并审核 UI Workbook 和 manifest。`ProcedureRunner` 是兼容保留的 executor
-名称，实际由 TestConductor 本地执行，不调用 auto_ui_test 的运行或导航接口。运行前必须重新读取
-用户选择的 Procedure 资产库，并核对 library id/hash 以及每个 Procedure 的版本和指纹。
-若 manifest 的 `variable_refs` 非空，必须先从受控 RuntimeContext 注入对应变量；没有变量
-来源时阻断 UI 启动，不能把 `{name}` 占位符当成实际输入。
+TestConductor 确定性编译并审核 Agent UI manifest。`AgentUiRunner` 调用本地 Stagehand，
+但模型只能在已审批 Action/Check、资产 URL 和最大步数内规划页面技术操作。
 
 Coordinator 遇到 UI stage 时：
 
 1. 校验所有 stage artifact 的基本身份和文件；
-2. 校验所选资产库与已审批计划的 hash 和 Procedure 身份；
-3. 从首个 Procedure 的 `precondition.url_prefix` 打开浏览器；
-4. 在同一 UI stage 的一个浏览器会话中顺序执行全部 Procedure；
+2. 校验已审批 manifest 中的 URL、最大步数和 Action/Check；
+3. 按资产或测试计划提供的起始地址打开浏览器；
+4. 在同一 UI stage 的一个浏览器会话中顺序执行已审批动作；
 5. 将步骤证据和断言结果纳入统一 flow 报告。
 
 跨渠道 flow 可以按顺序执行 UI、API、DB 等 stage，但每个 UI stage 都创建独立浏览器会话。
@@ -341,7 +336,7 @@ required-state resolution
 data consumer binding
 cleanup slot/data/binding/variable ref
 provisional artifact 下载与 hash
-Procedure 资产库、版本、指纹和本地 runner 状态
+Agent 起始 URL、最大步数、Action/Check 和本地 runner 状态
 ```
 
 两个页面都不能用“模型已经生成”代替人工决定，也不能在审核后允许原地修改已绑定 hash 的

@@ -1,4 +1,4 @@
-"""Stable category-first paths for generated executor files."""
+﻿"""Stable category-first paths for generated executor files."""
 
 from __future__ import annotations
 
@@ -7,7 +7,6 @@ from typing import Any
 
 
 EXECUTOR_ARTIFACT_CATEGORIES = {
-    "procedure_playwright": "ui",
     "stagehand_agent": "ui",
     "http_api": "api",
     "database": "database",

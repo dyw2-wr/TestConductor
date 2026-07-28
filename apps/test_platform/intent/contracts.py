@@ -1,4 +1,4 @@
-"""第一层 TestDesign v4 公共契约。
+﻿"""第一层 TestDesign v4 公共契约。
 
 第一层直接接收原始需求文本和前端选择。它不解析标题、列表、表格或段落，
 也不拆分或改写原文；审核通过的产物只保留原文快照、内容哈希和
@@ -833,8 +833,8 @@ def contains_secret_value(value: Any) -> bool:
         for key, item in value.items():
             normalized_key = _normalized_mapping_key(key)
             if normalized_key == "secret" and isinstance(item, bool):
-                # Contract metadata such as ProcedureV1's secret flag is not
-                # a credential value. String/non-boolean values still pass
+                # A schema's boolean secret flag is not a credential value.
+                # String/non-boolean values still pass
                 # through the normal secret checks below.
                 continue
             is_sensitive_key = any(

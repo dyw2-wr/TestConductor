@@ -1,8 +1,8 @@
-# TestConductor
+﻿# TestConductor
 
 这是一个与 AI 多轮协作后形成的项目，目前仍有一些瑕疵待完善。
 
-UI 测试可以选择编排已有 UI 函数，或根据粗粒度网页资料交给 Stagehand Agent 探索执行。函数资产库使用固定格式；Agent 资料只需提供 URL、功能和最大步数。
+UI 测试根据粗粒度网页资料交给 Stagehand Agent 探索执行。Agent 资料只需提供 URL、功能和最大步数。
 
 TestConductor 是一个本地运行、人工审批后执行的 AI 测试工作台。它把需求逐层转换为可审核的测试计划和执行计划，审批执行计划后自动运行并生成证据与报告。
 
@@ -22,27 +22,13 @@ TestConductor 是一个本地运行、人工审批后执行的 AI 测试工作�
 
 | 测试渠道 | 计划和执行方式 |
 | --- | --- |
-| UI | 选择编排已发布 UI 函数，或由本地 Stagehand Agent 执行已审批 Action/Check |
+| UI | 由本地 Stagehand Agent 执行已审批 Action/Check |
 | API | 根据 OpenAPI、接口文档或文字说明生成受控 HTTP 请求与断言 |
 | 数据库 | 根据表结构、数据字典和知识生成只读 SQL 与检查 |
 | 性能/压力 | 根据需求和资源上限生成负载阶段、指标和阈值 |
 | TCP 端口 | 对测试资源中明确登记的单个主机和端口执行连接检查 |
 
-API、数据库、性能和端口测试由 AI 在资源约束内生成执行内容，再交给人工审批。UI 函数模式编排已发布 Procedure；Agent 模式保留已审批 Action/Check，由 Stagehand 在资产限定的网站和最大步数内探索页面。
-
-## UI 函数资产
-
-TestConductor 不依赖 `auto_ui_test` 的运行或导航接口。两个项目只通过一个站点级 SQLite 文件交换已发布的 UI 函数资产。
-
-测试资源中的“UI 函数资产库”应选择 `ProcedureAssetLibraryV1` 文件。执行计划使用的核心数据包括：
-
-- 资产库版本和内容 Hash。
-- Procedure 的稳定 ID、版本和 fingerprint。
-- Procedure 名称、用途、前置条件和参数契约。
-- 已发布状态以及按顺序执行的 Action/Check 调用。
-- 参数来源，例如测试数据、profile、secret 或 remember 值。
-
-资产库不需要提供 Navigation，也不提供 Repair 经验。执行前会重新校验资产库及 Procedure 身份；文件变化后，旧执行计划会被阻断并要求重新生成和审批。
+API、数据库、性能和端口测试由 AI 在资源约束内生成执行内容，再交给人工审批。UI 保留已审批 Action/Check，由 Stagehand 在资产限定的网站和最大步数内探索页面。
 
 ## 三层职责
 
@@ -63,8 +49,7 @@ TestConductor 不依赖 `auto_ui_test` 的运行或导航接口。两个项目�
 
 执行计划智能体读取已审批测试计划和当前测试资源，生成可以直接审批的完整执行内容：
 
-- UI 函数模式：所选 Procedure 及排列顺序、输入绑定和检查点。
-- UI Agent 模式：起始 URL、资产最大步数以及逐项 Action/Check。
+- UI Agent：起始 URL、资产最大步数以及逐项 Action/Check。
 - API：method、URL、参数、请求体和断言。
 - 数据库：连接引用、只读 SQL、参数和结果断言。
 - 性能：目标、负载阶段、持续时间、并发量、指标和阈值。

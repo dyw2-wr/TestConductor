@@ -1,8 +1,8 @@
-"""第三层执行器的最小运行时契约。
+﻿"""第三层执行器的最小运行时契约。
 
 第二层只产出执行器文件；本包只读取已经审核通过的文件并运行它们。运行时资源
 （变量、连接、transport 和性能 driver）通过 :class:`RuntimeContext` 注入，因而
-不会把密码或环境连接信息写回测试计划。UI Procedure 从已选择的只读资产库加载。
+不会把密码或环境连接信息写回测试计划。UI Agent 的 Action/Check 在审批时冻结进执行产物。
 """
 
 from __future__ import annotations
@@ -86,9 +86,6 @@ class RuntimeContext:
 
     variables: dict[str, Any] = field(default_factory=dict)
     base_urls: dict[str, str] = field(default_factory=dict)
-    procedure_asset_database: str = ""
-    procedure_library_id: str = ""
-    procedure_library_hash: str = ""
     ui_browser_headless: bool = True
     # Catalog host_ref -> runtime hostname/IP. The actual host is never written
     # to a plan or evidence; port probes resolve it only at execution time.
@@ -111,10 +108,6 @@ class RuntimeContext:
     evidence_dir: Optional[Path] = None
 
     def __post_init__(self) -> None:
-        if self.procedure_asset_database:
-            path = Path(self.procedure_asset_database)
-            if not path.is_absolute() or "\x00" in self.procedure_asset_database:
-                raise ValueError("procedure_asset_database 必须是绝对文件路径")
         if type(self.ui_browser_headless) is not bool:
             raise ValueError("ui_browser_headless 必须是 bool")
         for host_ref, host in self.network_hosts.items():

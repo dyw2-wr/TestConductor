@@ -4,18 +4,18 @@
       "scenario_id": "design-REQ-MULTI-INITIAL-V4-SCN-0001",
       "stages": [
         {
-          "executor_kind": "procedure_playwright",
+          "executor_kind": "stagehand_agent",
           "operations": [
             {
               "operation_id": "design-REQ-MULTI-INITIAL-V4-OP-0001",
-              "catalog_ref": "procedure.demo.open-home"
+              "catalog_ref": "agent.demo.open-home"
             }
           ],
           "expected_results": [
             {
               "expected_result_id": "design-REQ-MULTI-INITIAL-V4-EXP-0001",
-              "catalog_ref": "procedure.demo.open-home",
-              "observable_ref": "observable.procedure.demo-ready"
+              "catalog_ref": "agent.demo.open-home",
+              "observable_ref": "observable.agent.demo-ready"
             }
           ]
         }

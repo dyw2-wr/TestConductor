@@ -1,4 +1,4 @@
-"""TestPlan v4 flow/stage 的确定性门禁。"""
+﻿"""TestPlan v4 flow/stage 的确定性门禁。"""
 
 from __future__ import annotations
 
@@ -11,7 +11,6 @@ from apps.test_platform.database_sql import validate_read_only_sql
 from .catalogs import PlanningCatalogSnapshot
 from .contracts import (
     AgentUiExecution,
-    ProcedureExecution,
     DatabaseExecution,
     ExecutorKind,
     HttpExecution,
@@ -25,13 +24,11 @@ from .contracts import (
     TestPlanDraft,
     compute_plan_validation_content_hash,
     design_hash,
-    format_procedure_input_data,
     reject_secret_values,
 )
 
 
 EXECUTOR_CHANNEL = {
-    ExecutorKind.PROCEDURE_PLAYWRIGHT: "ui",
     ExecutorKind.STAGEHAND_AGENT: "ui",
     ExecutorKind.HTTP_API: "api",
     ExecutorKind.DATABASE: "database",
@@ -460,8 +457,6 @@ class TestPlanValidator:
     @staticmethod
     def _execution_steps(execution):
         if isinstance(execution, AgentUiExecution):
-            return execution.rows
-        if isinstance(execution, ProcedureExecution):
             return execution.rows
         if isinstance(execution, HttpExecution):
             return execution.requests
@@ -959,99 +954,6 @@ class TestPlanValidator:
                     add,
                     row.source,
                 )
-        elif isinstance(execution, ProcedureExecution):
-            profile = catalog.get_procedure_profile(execution.capability_profile_ref)
-            if profile is None or (
-                profile.site != execution.capability_site
-                or profile.library_id != execution.library_id
-                or profile.library_hash != execution.library_hash
-            ):
-                add(
-                    "PROCEDURE_PROFILE_MISMATCH",
-                    "UI 能力配置与执行目录不一致",
-                    f"{path}.execution",
-                )
-            for index, row in enumerate(execution.rows):
-                row_path = f"{path}.execution.rows[{index}]"
-                operation = catalog.get_procedure_operation(row.operation_ref)
-                if operation is not None:
-                    catalog_effects.append(operation.state_effect)
-                    if (
-                        row.procedure_id != operation.procedure_id
-                        or row.procedure_version != operation.procedure_version
-                        or row.procedure_fingerprint
-                        != operation.procedure_fingerprint
-                    ):
-                        add(
-                            "PROCEDURE_PROCEDURE_IDENTITY_MISMATCH",
-                            "UI 沉淀身份与执行目录不一致",
-                            row_path,
-                        )
-                    if (
-                        row.source.source_kind == "required_state"
-                        and operation.state_effect == "read_only"
-                    ):
-                        add(
-                            "SETUP_RESOURCE_READ_ONLY",
-                            "准备阶段不能使用只读 UI 操作建立所需状态",
-                            row_path,
-                        )
-                self._validate_source_action(
-                    row.source, row.action, operation, operations, required_states, row_path, add
-                )
-                bound_expected = [
-                    expectations.get(item.expected_result_id)
-                    for item in row.assertions
-                ]
-                checkpoint = "；".join(item.text for item in bound_expected if item)
-                if (row.checkpoint or "") != checkpoint:
-                    add(
-                        "PROCEDURE_CHECKPOINT_MISMATCH",
-                        "UI 检查点改写了第一层期望结果",
-                        f"{row_path}.checkpoint",
-                    )
-                if profile is not None and operation is not None:
-                    if row.operation_ref not in {
-                        item.operation_ref for item in profile.operations
-                    }:
-                        add(
-                            "PROCEDURE_OPERATION_PROFILE_MISMATCH",
-                            "UI 操作不属于所选能力配置",
-                            row_path,
-                        )
-                    allowed_by_ref = {
-                        item.observable_ref: item for item in profile.observables
-                    }
-                    for assertion in row.assertions:
-                        observable = allowed_by_ref.get(assertion.observable_ref)
-                        if observable is None or observable.page_ref != operation.page_ref:
-                            add(
-                                "PROCEDURE_OBSERVABLE_PAGE_MISMATCH",
-                                "UI 可观察项不属于操作页面",
-                                f"{row_path}.assertions",
-                            )
-                self._validate_assertions(
-                    row.assertions, expectations, profile, row_path, add, row.source
-                )
-                self._validate_data(
-                    row.data_bindings, row.operation_ref, catalog, row_path, add
-                )
-                try:
-                    expected_input_text = format_procedure_input_data(row.data_bindings)
-                except ValueError as exc:
-                    add(
-                        "PROCEDURE_INPUT_DATA_BINDING_INVALID",
-                        str(exc),
-                        f"{row_path}.data_bindings",
-                    )
-                    expected_input_text = row.input_data
-                if row.input_data != expected_input_text:
-                    add(
-                        "PROCEDURE_INPUT_DATA_MISMATCH",
-                        "UI 输入数据改写了执行目录的数据绑定",
-                        f"{row_path}.input_data",
-                    )
-
     @staticmethod
     def _validate_generated_database_step(
         step,
@@ -1154,13 +1056,7 @@ class TestPlanValidator:
     def _validate_source_action(
         source, action, operation, operations, required_states, path, add
     ):
-        # Procedure invocation metadata is an executor handoff marker; the
-        # business action before it must still match the first-layer source.
-        business_action = re.sub(
-            r"\s+\[procedure_id=[A-Za-z0-9][A-Za-z0-9_.@/-]*;version=[1-9][0-9]*\]$",
-            "",
-            str(action or ""),
-        )
+        business_action = str(action or "")
         if operation is None:
             add("CATALOG_REF_UNKNOWN", "execution 引用了未知 catalog ref", path)
             return
@@ -1245,14 +1141,14 @@ class TestPlanValidator:
                     "断言改写了第一层 expected",
                     assertion_path,
                 )
-            if assertion.kind != "procedure" and not assertion.operator:
+            if assertion.kind != "agent_ui" and not assertion.operator:
                 add(
                     "ASSERTION_OPERATOR_REQUIRED",
                     "自动断言需要结构化 operator",
                     f"{assertion_path}.operator",
                 )
             elif (
-                assertion.kind != "procedure"
+                assertion.kind != "agent_ui"
                 and assertion.expected is None
                 and assertion.operator not in no_expected_operators
             ):
@@ -1263,7 +1159,7 @@ class TestPlanValidator:
                 )
             for field in ("kind", "path", "name", "column", "metric", "percentile"):
                 catalog_value = (
-                    "procedure"
+                    "agent_ui"
                     if field == "kind" and not hasattr(observable, "kind")
                     else getattr(observable, field, None)
                 )
@@ -1290,11 +1186,11 @@ class TestPlanValidator:
                 "exists": {"equals", "not_equals", "exists", "not_exists"},
                 "state": {"equals", "not_equals"},
                 "connect_latency_ms": {"equals", "lte", "lt", "gte", "gt", "exists"},
-                "procedure": set(),
+                "agent_ui": set(),
             }.get(assertion.kind)
             if (
                 allowed_operators is not None
-                and assertion.kind != "procedure"
+                and assertion.kind != "agent_ui"
                 and assertion.operator not in allowed_operators
             ):
                 add(

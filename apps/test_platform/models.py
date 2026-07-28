@@ -1,4 +1,4 @@
-from hashlib import sha256
+﻿from hashlib import sha256
 from uuid import uuid4
 
 from django.core.exceptions import ValidationError
@@ -153,12 +153,6 @@ class TestResourceProfile(models.Model):
         verbose_name="测试环境",
         help_text="例如 local、test 或 staging；不同环境的资源和产物不会混用。",
     )
-    ui_procedure_database = models.FileField(
-        upload_to="test_platform/resources/ui-procedures/%Y/%m/",
-        blank=True,
-        verbose_name="沉淀资产库",
-        help_text="上传一个网站对应的 SQLite UI 函数资产库，例如 127.0.0.1.sqlite。",
-    )
     ui_agent_asset_file = models.FileField(
         upload_to="test_platform/resources/ui-agent/%Y/%m/",
         blank=True,
@@ -242,7 +236,7 @@ class TestResourceProfile(models.Model):
 
     def configured_channels(self) -> set[str]:
         channels: set[str] = set()
-        if self.ui_procedure_database or self.ui_agent_asset_file or self.ui_agent_asset_text.strip():
+        if self.ui_agent_asset_file or self.ui_agent_asset_text.strip():
             channels.add("ui")
         if (self.api_openapi_file or self.api_asset_text.strip()) and self.api_base_url:
             channels.add("api")
@@ -259,16 +253,8 @@ class TestResourceProfile(models.Model):
     def clean(self) -> None:
         super().clean()
         errors: dict[str, str] = {}
-        ui_sources = sum(
-            bool(value)
-            for value in (
-                self.ui_procedure_database,
-                self.ui_agent_asset_file,
-                self.ui_agent_asset_text.strip(),
-            )
-        )
-        if ui_sources > 1:
-            errors["ui_procedure_database"] = "UI 函数资产库和网页 Agent 资料只能选择一种"
+        if self.ui_agent_asset_file and self.ui_agent_asset_text.strip():
+            errors["ui_agent_asset_text"] = "网页 Agent 资料文件和文字说明只能选择一种"
         has_api_source = bool(self.api_openapi_file or self.api_asset_text.strip())
         if has_api_source != bool(self.api_base_url):
             errors["api_openapi_file"] = "接口资料和 API 基础地址必须同时配置"

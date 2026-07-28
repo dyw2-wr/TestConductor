@@ -1,10 +1,9 @@
-"""Run one reviewed intent through UI, API, DB, performance, and TCP artifacts.
+﻿"""Run one reviewed intent through UI, API, DB, performance, and TCP artifacts.
 
 The two model boundaries use deterministic demo-data gateways so the demo is
 repeatable without an API key.  They still go through the real prompts,
 Pydantic contracts, compilers, reviews, hash gates, runners, and evidence
-writer. UI produces a Procedure execution plan but is blocked because this demo
-does not select a Procedure asset database; the other four flows execute against
+writer. UI uses an isolated Agent stub; the other four flows execute against
 services started by this file.
 """
 
@@ -38,6 +37,8 @@ from apps.test_platform.planning.planner import (
     DefaultPlanPromptBuilder,
     PlanDraftGenerator,
 )
+from apps.test_platform.runners import RunnerRegistry
+from apps.test_platform.runners.agent_ui import AgentUiRunner
 from apps.test_platform.runners.contracts import RunStatus, RuntimeContext
 from apps.test_platform.runners.execution import ExecutionCoordinator
 from apps.test_platform.runners.performance_http import HttpPerformanceDriver
@@ -169,13 +170,28 @@ def _build_workflow() -> IntentToExecutionWorkflow:
         plan_compiler=compiler,
         # The deterministic example writes only to its selected artifact root.
         # Production workflow instances use the default database recorder.
-        coordinator=ExecutionCoordinator(run_history_recorder=None),
+        coordinator=ExecutionCoordinator(
+            registry=RunnerRegistry(
+                agent_ui=AgentUiRunner(
+                    invoke=lambda request: {
+                        "success": True,
+                        "completed": True,
+                        "final_url": request["start_url"],
+                        "message": "isolated Agent UI simulation passed",
+                        "actions": [{"action": row["action"]} for row in request["rows"]],
+                        "evidence": [],
+                    }
+                )
+            ),
+            run_history_recorder=None,
+        ),
     )
 
 
 def _catalog_for(environment: _DemoEnvironment) -> PlanningCatalogSnapshot:
     payload = _load_demo_data("multichannel_initial_catalog_content.json")
     payload["tcp_port_probes"][0]["port"] = environment.tcp_port
+    payload["agent_ui_profiles"][0]["start_url"] = environment.http_base_url
     return PlanningCatalogSnapshot.build(**payload)
 
 
@@ -275,7 +291,7 @@ def run_demo(output_root: Path | None = None) -> dict[str, Any]:
         "artifact_root": str(root),
         "run_manifest": summary.manifest_path,
         "reports": dict(summary.report_paths),
-        "ui_note": "UI Procedure plan generated; no Procedure asset database selected",
+        "ui_note": "UI Agent plan executed with an isolated deterministic stub",
     }
     (root / "demo-result.json").write_text(
         json.dumps(result, ensure_ascii=False, indent=2) + "\n",
@@ -298,7 +314,7 @@ def main() -> int:
         item["executor_kind"]: item["status"] for item in result["flow_results"]
     }
     expected = {
-        "procedure_playwright": "blocked",
+        "stagehand_agent": "passed",
         "http_api": "passed",
         "database": "passed",
         "performance": "passed",

@@ -1,12 +1,9 @@
-"""第二层：ApprovedTestDesignBundle + catalog -> approved TestPlan artifacts。"""
+﻿"""第二层：ApprovedTestDesignBundle + catalog -> approved TestPlan artifacts。"""
 
 from .catalogs import (
     AgentUiCapabilityProfile,
     AgentUiObservable,
     AgentUiOperation,
-    ProcedureCapabilityProfile,
-    ProcedureObservable,
-    ProcedureOperation,
     CleanupAction,
     DataBinding,
     DatabaseColumn,
@@ -63,9 +60,6 @@ __all__ = [
     "AgentUiOperation",
     "AgentUiPlanRow",
     "ApprovedTestPlanBundle",
-    "ProcedureCapabilityProfile",
-    "ProcedureObservable",
-    "ProcedureOperation",
     "CleanupAction",
     "CleanupDataBinding",
     "CleanupDataBindingSelection",

@@ -1,4 +1,4 @@
-"""Sequential v4 PlanFlow execution coordinator.
+﻿"""Sequential v4 PlanFlow execution coordinator.
 
 The coordinator validates one approved handoff, preflights every stage in a flow,
 then executes that flow in declared order. A stage may use exactly one executor;
@@ -348,7 +348,6 @@ class ExecutionCoordinator:
             shared = (
                 preflight_errors.get("__cleanup__")
                 or preflight_errors.get("__data_guarantee__")
-                or preflight_errors.get("__procedure__")
             )
             for stage in flow.stages:
                 stage_id = str(stage.stage_id)
@@ -423,12 +422,6 @@ class ExecutionCoordinator:
                         artifact_dir,
                         artifact,
                         context,
-                        correlation={
-                            "run_id": coordinator_run_id,
-                            "flow_id": flow_id,
-                            "stage_id": stage_id,
-                            "plan_id": str(plan.plan_id),
-                        },
                     )
                 except Exception as exc:  # pragma: no cover - registry-specific failures
                     result = RunResult(

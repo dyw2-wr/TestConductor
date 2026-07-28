@@ -1,4 +1,4 @@
-"""Deterministic JSON, HTML, and JUnit reports for one platform run.
+﻿"""Deterministic JSON, HTML, and JUnit reports for one platform run.
 
 The reporter consumes normalized plan/run data only.  It does not call a model,
 re-evaluate assertions, or read raw API/database payloads.  Runner results remain
@@ -32,7 +32,7 @@ _KNOWN_STATUSES = (
 )
 _SAFE_COMPONENT = re.compile(r"[^A-Za-z0-9_.-]+")
 _EXECUTOR_LABELS = {
-    "procedure_playwright": "UI 页面测试",
+    "stagehand_agent": "UI 页面测试",
     "http_api": "接口测试",
     "database": "数据库测试",
     "performance": "性能/压力测试",
@@ -433,26 +433,15 @@ class TestReportGenerator:
             [flow.get("finished_at") for flow in report_flows]
         ) or _field(summary, "finished_at")
         limitations: list[str] = []
-        blocked_procedure_stages = [
+        blocked_ui_stages = [
             stage
             for flow in report_flows
             for stage in flow["stages"]
-            if stage["executor_kind"] == "procedure_playwright"
+            if stage["executor_kind"] == "stagehand_agent"
             and stage["status"] == "blocked"
         ]
-        if blocked_procedure_stages:
-            missing_asset_database = any(
-                any(
-                    "UI_ASSET_DATABASE_MISSING" in str(error)
-                    for error in stage.get("errors", [])
-                )
-                for stage in blocked_procedure_stages
-            )
-            limitations.append(
-                "未选择沉淀资产库，UI 测试未执行。"
-                if missing_asset_database
-                else "UI 测试在执行前被阻断；请查看阶段错误。"
-            )
+        if blocked_ui_stages:
+            limitations.append("UI 测试在执行前被阻断；请查看阶段错误。")
         if any(stage["status"] == "dry_run" for flow in report_flows for stage in flow["stages"]):
             limitations.append("dry_run 只完成预检，不代表外部测试动作已执行。")
         if not manifest_payload:

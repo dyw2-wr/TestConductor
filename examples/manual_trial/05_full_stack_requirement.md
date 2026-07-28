@@ -1,10 +1,10 @@
-# TestConductor 本地全渠道回归
+﻿# TestConductor 本地全渠道回归
 
 在 local 环境完成一次复合测试，并为每个渠道保留独立结果和证据。
 
 ## UI 页面测试
 
-使用当前所选 Procedure 资产库中已经发布的 Workflow Lab 登录模块完成登录，登录后页面应显示已登录用户和角色。
+使用当前登记的 Workflow Lab 网页 Agent 资源完成登录，登录后页面应显示已登录用户和角色。
 
 ## 接口测试
 

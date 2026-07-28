@@ -1,4 +1,4 @@
-"""Short database transactions for one execution batch's audit record."""
+﻿"""Short database transactions for one execution batch's audit record."""
 
 from __future__ import annotations
 
@@ -18,7 +18,6 @@ _SAFE_HASH = re.compile(r"^sha256:[0-9a-f]{64}$")
 _SAFE_ERROR_CODE = re.compile(r"^[A-Z][A-Z0-9_]{1,63}$")
 _REPORT_KEYS = frozenset({"root", "json", "html", "junit"})
 _EXECUTOR_CATEGORIES = {
-    "procedure_playwright": "ui",
     "http_api": "api",
     "database": "database",
     "performance": "performance",

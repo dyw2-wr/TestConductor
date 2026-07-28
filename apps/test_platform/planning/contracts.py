@@ -1,4 +1,4 @@
-"""第二层 TestPlan v4 契约。
+﻿"""第二层 TestPlan v4 契约。
 
 第一层决定测什么，PlanningCatalog 声明目标环境可用的受控能力。第二层模型
 生成受资源约束的线性执行计划；确定性 compiler 再把每个 stage 编译成单一
@@ -56,7 +56,6 @@ class PlanReviewDecision(str, Enum):
 
 
 class ExecutorKind(str, Enum):
-    PROCEDURE_PLAYWRIGHT = "procedure_playwright"
     STAGEHAND_AGENT = "stagehand_agent"
     HTTP_API = "http_api"
     DATABASE = "database"
@@ -397,36 +396,6 @@ class BoundData(StrictPlanModel):
     input_refs: dict[str, str]
 
 
-def format_procedure_input_data(bindings: list[BoundData]) -> str | None:
-    """Render catalog bindings in the assignment syntax consumed by Procedure.
-
-    Procedure WorkbookV2 parses ``Input Data`` as semicolon/newline separated
-    ``name=value`` assignments. TestConductor keeps variable references as
-    placeholders so the external runner can resolve their values at runtime.
-    Sorting makes the workbook and validator deterministic.
-    """
-
-    assignments: dict[str, str] = {}
-    normalized_names: dict[str, str] = {}
-    for binding in bindings:
-        for key, variable_ref in binding.input_refs.items():
-            name = key.removeprefix("input.")
-            if not name:
-                raise ValueError("UI 输入数据项不能为空")
-            normalized = re.sub(r"[^a-zA-Z0-9_]+", "_", name).strip("_").lower()
-            if not normalized:
-                raise ValueError(f"UI 输入数据项无法归一化: {name}")
-            if normalized in normalized_names:
-                raise ValueError(f"UI 输入数据项重复绑定: {name}")
-            normalized_names[normalized] = name
-            assignments[name] = "{" + variable_ref + "}"
-    if not assignments:
-        return None
-    return "; ".join(
-        f"{key}={value}" for key, value in sorted(assignments.items())
-    )
-
-
 class BoundAssertion(StrictPlanModel):
     expected_result_id: str
     after_operation_id: str
@@ -446,52 +415,6 @@ class BoundAssertion(StrictPlanModel):
 class ExecutionSource(StrictPlanModel):
     source_kind: Literal["operation", "expected_result", "required_state"]
     source_id: str
-
-
-class ProcedurePlanRow(StrictPlanModel):
-    row_id: str
-    source: ExecutionSource
-    operation_ref: str
-    action: str
-    checkpoint: str | None = None
-    input_data: str | None = None
-    data_bindings: list[BoundData] = Field(default_factory=list)
-    assertions: list[BoundAssertion] = Field(default_factory=list)
-    procedure_id: str
-    procedure_version: int = Field(ge=1)
-    procedure_fingerprint: str
-
-    @model_validator(mode="after")
-    def validate_procedure_ref(self) -> "ProcedurePlanRow":
-        _require_safe_artifact_id(self.procedure_id, "ProcedurePlanRow.procedure_id")
-        if not re.fullmatch(r"sha256:[0-9a-f]{64}", self.procedure_fingerprint):
-            raise ValueError("ProcedurePlanRow.procedure_fingerprint 无效")
-        return self
-
-
-class ProcedureExecution(StrictPlanModel):
-    kind: Literal["procedure_playwright"] = "procedure_playwright"
-    capability_profile_ref: str
-    capability_site: str
-    library_id: str
-    library_hash: str
-    procedure_refs: list[str] = Field(default_factory=list)
-    rows: list[ProcedurePlanRow] = Field(min_length=1)
-
-    @model_validator(mode="after")
-    def validate_capabilities(self) -> "ProcedureExecution":
-        _require_safe_artifact_id(self.capability_site, "ProcedureExecution.capability_site")
-        _require_safe_artifact_id(self.library_id, "ProcedureExecution.library_id")
-        if not re.fullmatch(r"sha256:[0-9a-f]{64}", self.library_hash):
-            raise ValueError("ProcedureExecution.library_hash 无效")
-        if len(set(self.procedure_refs)) != len(self.procedure_refs):
-            raise ValueError("ProcedureExecution.procedure_refs 不能重复")
-        expected_refs = sorted(
-            {f"{row.procedure_id}@v{row.procedure_version}" for row in self.rows}
-        )
-        if self.procedure_refs != expected_refs:
-            raise ValueError("ProcedureExecution.procedure_refs 与行级模块引用不一致")
-        return self
 
 
 class AgentUiPlanRow(StrictPlanModel):
@@ -634,8 +557,7 @@ class PerformanceExecution(StrictPlanModel):
 
 
 PlanExecution = Annotated[
-    ProcedureExecution
-    | AgentUiExecution
+    AgentUiExecution
     | HttpExecution
     | DatabaseExecution
     | PortExecution
@@ -1028,8 +950,6 @@ __all__ = [
     "ApprovedTestPlanBundle",
     "BoundAssertion",
     "BoundData",
-    "ProcedureExecution",
-    "ProcedurePlanRow",
     "CleanupDataBinding",
     "CleanupDataBindingSelection",
     "CleanupSelection",
@@ -1073,5 +993,4 @@ __all__ = [
     "compute_plan_review_content_hash",
     "compute_plan_validation_content_hash",
     "design_hash",
-    "format_procedure_input_data",
 ]

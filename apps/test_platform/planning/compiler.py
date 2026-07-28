@@ -1,4 +1,4 @@
-"""把模型选择的 catalog 引用确定性编译成 TestPlan v4 flow。"""
+﻿"""把模型选择的 catalog 引用确定性编译成 TestPlan v4 flow。"""
 
 from __future__ import annotations
 
@@ -27,9 +27,6 @@ from .catalogs import (
     AgentUiObservable,
     AgentUiOperation,
     LoadStage,
-    ProcedureCapabilityProfile,
-    ProcedureObservable,
-    ProcedureOperation,
     DatabaseObservable,
     DatabaseOperation,
     HttpObservable,
@@ -46,8 +43,6 @@ from .contracts import (
     ApprovedTestPlanBundle,
     BoundAssertion,
     BoundData,
-    ProcedureExecution,
-    ProcedurePlanRow,
     CleanupDataBinding,
     DatabaseExecution,
     DatabaseOperationPlan,
@@ -81,7 +76,6 @@ from .contracts import (
     compute_artifact_set_hash,
     compute_plan_review_content_hash,
     compute_plan_validation_content_hash,
-    format_procedure_input_data,
     design_hash,
     reject_secret_values,
 )
@@ -90,7 +84,6 @@ from .artifact_paths import artifact_category, generated_files_root
 
 
 EXECUTOR_CHANNEL = {
-    ExecutorKind.PROCEDURE_PLAYWRIGHT: "ui",
     ExecutorKind.STAGEHAND_AGENT: "ui",
     ExecutorKind.HTTP_API: "api",
     ExecutorKind.DATABASE: "database",
@@ -134,12 +127,6 @@ class TestPlanCompiler:
 
         adapter = self._adapters.get(executor_kind)
         if adapter is not None:
-            return adapter
-        if executor_kind == ExecutorKind.PROCEDURE_PLAYWRIGHT:
-            from .adapters.procedure import ProcedureStageCompiler
-
-            adapter = ProcedureStageCompiler()
-            self._adapters[executor_kind] = adapter
             return adapter
         if executor_kind == ExecutorKind.STAGEHAND_AGENT:
             from .adapters.agent_ui import AgentUiCompiler
@@ -540,7 +527,6 @@ class TestPlanCompiler:
                 key=lambda item: expected_order[item.expected_result_id]
             )
         resolver = {
-            ExecutorKind.PROCEDURE_PLAYWRIGHT: self._resolve_procedure,
             ExecutorKind.STAGEHAND_AGENT: self._resolve_agent_ui,
             ExecutorKind.HTTP_API: self._resolve_http,
             ExecutorKind.DATABASE: self._resolve_database,
@@ -603,9 +589,6 @@ class TestPlanCompiler:
         elif executor_kind == ExecutorKind.DATABASE:
             resource = catalog.get_database_operation(catalog_ref)
             expected_type = DatabaseOperation
-        elif executor_kind == ExecutorKind.PROCEDURE_PLAYWRIGHT:
-            resource = catalog.get_procedure_operation(catalog_ref)
-            expected_type = ProcedureOperation
         elif executor_kind == ExecutorKind.STAGEHAND_AGENT:
             resource = catalog.get_agent_ui_operation(catalog_ref)
             expected_type = AgentUiOperation
@@ -763,7 +746,7 @@ class TestPlanCompiler:
             expected_result_id=expected.expected_result_id,
             after_operation_id=expected.after_operation_id,
             observable_ref=selection.observable_ref,
-            kind=observable.kind if hasattr(observable, "kind") else "procedure",
+            kind=observable.kind if hasattr(observable, "kind") else "agent_ui",
             statement=expected.text,
             operator=expected.operator,
             expected=expected.expected,
@@ -1239,93 +1222,6 @@ class TestPlanCompiler:
                 )
             )
         return PortExecution(probes=probes)
-
-    def _resolve_procedure(
-        self, scenario: LogicalScenario, units: list[_ExecutionUnit], catalog
-    ) -> ProcedureExecution:
-        profile_by_ref: dict[str, ProcedureCapabilityProfile] = {}
-        operation_by_ref: dict[str, ProcedureOperation] = {}
-        for unit in units:
-            operation = catalog.get_procedure_operation(unit.catalog_ref)
-            if not isinstance(operation, ProcedureOperation):
-                raise ValueError(f"UI 阶段引用了非 UI 操作: {unit.catalog_ref}")
-            matches = [
-                profile
-                for profile in catalog.procedure_profiles
-                if any(
-                    item.operation_ref == operation.operation_ref
-                    for item in profile.operations
-                )
-            ]
-            if len(matches) != 1:
-                raise ValueError(
-                    f"UI 操作 {operation.operation_ref} 的能力配置不唯一"
-                )
-            profile_by_ref[matches[0].profile_ref] = matches[0]
-            operation_by_ref[operation.operation_ref] = operation
-        if len(profile_by_ref) != 1:
-            raise ValueError("一个 UI 阶段必须属于同一能力配置")
-        profile = next(iter(profile_by_ref.values()))
-        rows: list[ProcedurePlanRow] = []
-        for index, unit in enumerate(units, start=1):
-            operation = operation_by_ref[unit.catalog_ref]
-            assertions: list[BoundAssertion] = []
-            checkpoints: list[str] = []
-            for selection in unit.assertions:
-                observable = next(
-                    (
-                        item
-                        for item in profile.observables
-                        if item.observable_ref == selection.observable_ref
-                    ),
-                    None,
-                )
-                if not isinstance(observable, ProcedureObservable) or (
-                    observable.page_ref
-                    not in {
-                        "page.runtime",
-                        operation.page_ref,
-                    }
-                ):
-                    raise ValueError(
-                        f"UI 可观察项 {selection.observable_ref} "
-                        f"不属于操作页面 {operation.page_ref}"
-                    )
-                assertion = self._assertion(scenario, selection, observable)
-                assertions.append(assertion)
-                checkpoints.append(assertion.statement)
-            data = self._bound_data(unit, ExecutorKind.PROCEDURE_PLAYWRIGHT, catalog)
-            rows.append(
-                ProcedurePlanRow(
-                    row_id=f"ROW-{index:04d}",
-                    source=unit.source,
-                    operation_ref=operation.operation_ref,
-                    action=(
-                        f"{unit.action} [procedure_id={operation.procedure_id};"
-                        f"version={operation.procedure_version}]"
-                    ),
-                    checkpoint="；".join(checkpoints) or None,
-                    input_data=format_procedure_input_data(data),
-                    data_bindings=data,
-                    assertions=assertions,
-                    procedure_id=operation.procedure_id,
-                    procedure_version=operation.procedure_version,
-                    procedure_fingerprint=operation.procedure_fingerprint,
-                )
-            )
-        return ProcedureExecution(
-            capability_profile_ref=profile.profile_ref,
-            capability_site=profile.site,
-            library_id=profile.library_id,
-            library_hash=profile.library_hash,
-            procedure_refs=sorted(
-                {
-                    f"{operation.procedure_id}@v{operation.procedure_version}"
-                    for operation in operation_by_ref.values()
-                }
-            ),
-            rows=rows,
-        )
 
     def compile(
         self,

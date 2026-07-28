@@ -3,7 +3,7 @@
   "catalog_id": "catalog.test_conductor-demo.local.v4",
   "system_id": "test_conductor-demo",
   "environment": "local",
-  "available_executors": ["procedure_playwright", "http_api", "database", "performance", "tcp_port"],
+  "available_executors": ["stagehand_agent", "http_api", "database", "performance", "tcp_port"],
   "http_operations": [
     {
       "operation_ref": "http.demo.health",
@@ -75,28 +75,21 @@
       ]
     }
   ],
-  "procedure_profiles": [
+  "agent_ui_profiles": [
     {
-      "profile_ref": "procedure.demo.home",
-      "site": "demo.local",
-      "library_id": "site.demo.local",
-      "library_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-      "description": "Reviewed local home-page module catalog",
+      "profile_ref": "agent.demo.home",
+      "start_url": "http://127.0.0.1/",
+      "max_steps": 10,
       "operations": [
         {
-          "operation_ref": "procedure.demo.open-home",
-          "page_ref": "page.demo.home",
-          "action": "Open the local demo home page",
-          "state_effect": "read_only",
-          "procedure_id": "demo.open-home",
-          "procedure_version": 1,
-          "procedure_fingerprint": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+          "operation_ref": "agent.demo.open-home",
+          "description": "Open the local demo home page",
+          "state_effect": "read_only"
         }
       ],
       "observables": [
         {
-          "observable_ref": "observable.procedure.demo-ready",
-          "page_ref": "page.demo.home",
+          "observable_ref": "observable.agent.demo-ready",
           "description": "The page contains the Demo ready message"
         }
       ]

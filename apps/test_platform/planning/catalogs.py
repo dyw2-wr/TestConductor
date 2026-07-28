@@ -1,4 +1,4 @@
-"""Typed, immutable-by-contract resource summaries for planning v4.
+﻿"""Typed, immutable-by-contract resource summaries for planning v4.
 
 The catalog contains only reviewed references and semantic summaries. It must not
 contain runtime values, SQL, browser locators, filesystem paths, or credentials.
@@ -23,7 +23,6 @@ except ImportError:  # pragma: no cover - only exercised by older host interpret
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 CatalogExecutorKind: TypeAlias = Literal[
-    "procedure_playwright",
     "stagehand_agent",
     "http_api",
     "database",
@@ -400,90 +399,6 @@ class PerformanceProfile(StrictCatalogModel):
         return self
 
 
-class ProcedureOperation(StrictCatalogModel):
-    operation_ref: str
-    page_ref: str
-    action: str
-    # ProcedureV1 does not yet publish business state impact. Keep this
-    # explicit instead of guessing from its description or action names.
-    state_effect: CatalogStateEffect | Literal["unknown"]
-    allowed_binding_refs: list[str] = Field(default_factory=list)
-    procedure_id: str
-    procedure_version: int = Field(ge=1)
-    procedure_fingerprint: str
-    procedure_parameters: list[dict[str, Any]] = Field(default_factory=list)
-
-    @model_validator(mode="after")
-    def validate_operation(self) -> "ProcedureOperation":
-        _require_ref(self.operation_ref, "ProcedureOperation.operation_ref")
-        _require_ref(self.page_ref, "ProcedureOperation.page_ref")
-        _reject_unsafe_text(self.action, "ProcedureOperation.action")
-        for ref in self.allowed_binding_refs:
-            _require_ref(ref, "ProcedureOperation.allowed_binding_refs")
-        _require_unique(self.allowed_binding_refs, "ProcedureOperation.allowed_binding_refs")
-        _require_ref(self.procedure_id, "ProcedureOperation.procedure_id")
-        _require_hash(
-            self.procedure_fingerprint,
-            "ProcedureOperation.procedure_fingerprint",
-        )
-        parameter_names: list[str] = []
-        for parameter in self.procedure_parameters:
-            if set(parameter) != {"name", "source", "source_key", "required", "secret"}:
-                raise ValueError("ProcedureOperation.procedure_parameters 字段无效")
-            name = _require_ref(str(parameter["name"]), "ProcedureOperation.procedure_parameters.name")
-            source = str(parameter["source"] or "").strip()
-            source_key = str(parameter["source_key"] or "").strip()
-            if source not in {"input_data", "profile", "remember", "secret"} or not source_key:
-                raise ValueError("ProcedureOperation.procedure_parameters 来源无效")
-            if not isinstance(parameter["required"], bool) or not isinstance(parameter["secret"], bool):
-                raise ValueError("ProcedureOperation.procedure_parameters 标志必须是 bool")
-            parameter_names.append(name)
-        _require_unique(parameter_names, "ProcedureOperation.procedure_parameters")
-        return self
-
-
-class ProcedureObservable(StrictCatalogModel):
-    observable_ref: str
-    page_ref: str
-    description: str
-
-    @model_validator(mode="after")
-    def validate_observable(self) -> "ProcedureObservable":
-        _require_ref(self.observable_ref, "ProcedureObservable.observable_ref")
-        _require_ref(self.page_ref, "ProcedureObservable.page_ref")
-        _reject_unsafe_text(self.description, "ProcedureObservable.description")
-        return self
-
-
-class ProcedureCapabilityProfile(StrictCatalogModel):
-    profile_ref: str
-    site: str
-    library_id: str
-    library_hash: str
-    description: str
-    operations: list[ProcedureOperation]
-    observables: list[ProcedureObservable] = Field(default_factory=list)
-
-    @model_validator(mode="after")
-    def validate_profile(self) -> "ProcedureCapabilityProfile":
-        _require_ref(self.profile_ref, "ProcedureCapabilityProfile.profile_ref")
-        _require_ref(self.site, "ProcedureCapabilityProfile.site")
-        _require_ref(self.library_id, "ProcedureCapabilityProfile.library_id")
-        _require_hash(self.library_hash, "ProcedureCapabilityProfile.library_hash")
-        _reject_unsafe_text(self.description, "ProcedureCapabilityProfile.description")
-        if not self.operations:
-            raise ValueError("ProcedureCapabilityProfile requires a non-empty capability summary")
-        _require_unique(
-            [item.operation_ref for item in self.operations],
-            "ProcedureCapabilityProfile.operations",
-        )
-        _require_unique(
-            [item.observable_ref for item in self.observables],
-            "ProcedureCapabilityProfile.observables",
-        )
-        return self
-
-
 class AgentUiOperation(StrictCatalogModel):
     operation_ref: str
     description: str
@@ -593,9 +508,6 @@ CatalogResource: TypeAlias = (
     | PortObservable
     | PerformanceProfile
     | PerformanceObservable
-    | ProcedureCapabilityProfile
-    | ProcedureOperation
-    | ProcedureObservable
     | AgentUiCapabilityProfile
     | AgentUiOperation
     | AgentUiObservable
@@ -615,7 +527,6 @@ class _PlanningCatalogContent(StrictCatalogModel):
     database_schema: DatabaseSchema | None = None
     tcp_port_probes: list[TcpPortProbe] = Field(default_factory=list)
     performance_profiles: list[PerformanceProfile] = Field(default_factory=list)
-    procedure_profiles: list[ProcedureCapabilityProfile] = Field(default_factory=list)
     agent_ui_profiles: list[AgentUiCapabilityProfile] = Field(default_factory=list)
     data_bindings: list[DataBinding] = Field(default_factory=list)
     cleanup_actions: list[CleanupAction] = Field(default_factory=list)
@@ -644,8 +555,6 @@ class _PlanningCatalogContent(StrictCatalogModel):
             raise ValueError("tcp_port executor is available but tcp_port_probes is empty")
         if "performance" in available and not self.performance_profiles:
             raise ValueError("performance is available but performance_profiles is empty")
-        if "procedure_playwright" in available and not self.procedure_profiles:
-            raise ValueError("procedure_playwright is available but procedure_profiles is empty")
         if "stagehand_agent" in available and not self.agent_ui_profiles:
             raise ValueError("stagehand_agent is available but agent_ui_profiles is empty")
 
@@ -654,7 +563,6 @@ class _PlanningCatalogContent(StrictCatalogModel):
         definitions.extend((item.operation_ref, "database operation") for item in self.database_operations)
         definitions.extend((item.probe_ref, "tcp port probe") for item in self.tcp_port_probes)
         definitions.extend((item.profile_ref, "performance profile") for item in self.performance_profiles)
-        definitions.extend((item.profile_ref, "procedure profile") for item in self.procedure_profiles)
         definitions.extend((item.profile_ref, "agent UI profile") for item in self.agent_ui_profiles)
         definitions.extend((item.binding_ref, "data binding") for item in self.data_bindings)
         definitions.extend((item.action_ref, "cleanup action") for item in self.cleanup_actions)
@@ -666,9 +574,6 @@ class _PlanningCatalogContent(StrictCatalogModel):
             definitions.extend((item.observable_ref, "tcp port observable") for item in probe.observables)
         for profile in self.performance_profiles:
             definitions.extend((item.observable_ref, "performance observable") for item in profile.observables)
-        for profile in self.procedure_profiles:
-            definitions.extend((item.operation_ref, "procedure operation") for item in profile.operations)
-            definitions.extend((item.observable_ref, "procedure observable") for item in profile.observables)
         for profile in self.agent_ui_profiles:
             definitions.extend((item.operation_ref, "agent UI operation") for item in profile.operations)
             definitions.extend((item.observable_ref, "agent UI observable") for item in profile.observables)
@@ -688,11 +593,6 @@ class _PlanningCatalogContent(StrictCatalogModel):
             raise ValueError("tcp_port_probes 不能重复登记同一个 host_ref + port")
         performance_profiles = {item.profile_ref: item for item in self.performance_profiles}
         cleanup_actions = {item.action_ref: item for item in self.cleanup_actions}
-        procedure_operations = {
-            item.operation_ref: item
-            for profile in self.procedure_profiles
-            for item in profile.operations
-        }
 
         for operation in self.http_operations:
             self._validate_allowed_bindings(
@@ -714,9 +614,6 @@ class _PlanningCatalogContent(StrictCatalogModel):
                         f"binding_ref {ref} does not belong to database operation "
                         f"{operation.operation_ref}"
                     )
-        for operation_ref, operation in procedure_operations.items():
-            self._validate_allowed_bindings(operation_ref, "procedure_playwright", operation.allowed_binding_refs, bindings)
-
         for binding in self.data_bindings:
             cleanup_action = cleanup_actions.get(binding.operation_ref)
             if cleanup_action is not None:
@@ -747,7 +644,7 @@ class _PlanningCatalogContent(StrictCatalogModel):
                     "param."
                 ):
                     raise ValueError("database input slot 必须是 param.<name>")
-                if binding.executor_kind in {"procedure_playwright", "performance"} and not input_name.startswith(
+                if binding.executor_kind == "performance" and not input_name.startswith(
                     "input."
                 ):
                     raise ValueError("UI/性能输入项必须是 input.<name>")
@@ -761,9 +658,6 @@ class _PlanningCatalogContent(StrictCatalogModel):
                 raise ValueError(
                     "tcp_port 不接受动态 DataBinding；host/port 必须固定在 catalog probe"
                 )
-            elif binding.executor_kind == "procedure_playwright":
-                target = procedure_operations.get(binding.operation_ref)
-                allowed = target.allowed_binding_refs if target else []
             else:
                 target = performance_profiles.get(binding.operation_ref)
                 allowed = [binding.binding_ref] if target else []
@@ -854,15 +748,6 @@ class PlanningCatalogSnapshot(_PlanningCatalogContent):
     def get_performance_profile(self, ref: str) -> PerformanceProfile | None:
         return next((item for item in self.performance_profiles if item.profile_ref == ref), None)
 
-    def get_procedure_profile(self, ref: str) -> ProcedureCapabilityProfile | None:
-        return next((item for item in self.procedure_profiles if item.profile_ref == ref), None)
-
-    def get_procedure_operation(self, ref: str) -> ProcedureOperation | None:
-        return next(
-            (item for profile in self.procedure_profiles for item in profile.operations if item.operation_ref == ref),
-            None,
-        )
-
     def get_agent_ui_profile(self, ref: str) -> AgentUiCapabilityProfile | None:
         return next((item for item in self.agent_ui_profiles if item.profile_ref == ref), None)
 
@@ -886,15 +771,14 @@ class PlanningCatalogSnapshot(_PlanningCatalogContent):
     def get_observable(
         self,
         ref: str,
-    ) -> HttpObservable | DatabaseObservable | PortObservable | PerformanceObservable | ProcedureObservable | AgentUiObservable | None:
+    ) -> HttpObservable | DatabaseObservable | PortObservable | PerformanceObservable | AgentUiObservable | None:
         values: list[
-            HttpObservable | DatabaseObservable | PortObservable | PerformanceObservable | ProcedureObservable | AgentUiObservable
+            HttpObservable | DatabaseObservable | PortObservable | PerformanceObservable | AgentUiObservable
         ] = []
         values.extend(item for operation in self.http_operations for item in operation.observables)
         values.extend(item for operation in self.database_operations for item in operation.observables)
         values.extend(item for probe in self.tcp_port_probes for item in probe.observables)
         values.extend(item for profile in self.performance_profiles for item in profile.observables)
-        values.extend(item for profile in self.procedure_profiles for item in profile.observables)
         values.extend(item for profile in self.agent_ui_profiles for item in profile.observables)
         return next((item for item in values if item.observable_ref == ref), None)
 
@@ -904,7 +788,6 @@ class PlanningCatalogSnapshot(_PlanningCatalogContent):
             *self.database_operations,
             *self.tcp_port_probes,
             *self.performance_profiles,
-            *self.procedure_profiles,
             *self.agent_ui_profiles,
             *self.data_bindings,
             *self.cleanup_actions,
@@ -919,7 +802,7 @@ class PlanningCatalogSnapshot(_PlanningCatalogContent):
             )
             if candidate == ref:
                 return item
-        return self.get_procedure_operation(ref) or self.get_observable(ref)
+        return self.get_observable(ref)
 
 
 def compute_catalog_content_hash(value: PlanningCatalogSnapshot | Mapping[str, Any] | BaseModel) -> str:
@@ -963,9 +846,6 @@ __all__ = [
     "AgentUiCapabilityProfile",
     "AgentUiObservable",
     "AgentUiOperation",
-    "ProcedureCapabilityProfile",
-    "ProcedureObservable",
-    "ProcedureOperation",
     "CatalogExecutorKind",
     "CatalogStateEffect",
     "CleanupAction",

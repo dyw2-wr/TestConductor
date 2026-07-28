@@ -1,4 +1,4 @@
-"""Strict contracts shared by retrieval adapters and trusted source stores.
+﻿"""Strict contracts shared by retrieval adapters and trusted source stores.
 
 Vector records are indexes, not sources of truth.  Every selected candidate is
 reloaded from its owning catalog and checked against this metadata before use.
@@ -13,7 +13,6 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 ObjectType = Literal[
     "approved_knowledge",
-    "procedure",
     "repair_memory",
 ]
 
@@ -61,9 +60,6 @@ class RetrievalQuery(StrictRetrievalModel):
             for value in self.content_hashes
         ):
             raise ValueError("retrieval content_hashes must be sha256 identities")
-        if self.object_type == "procedure":
-            if not self.site.strip():
-                raise ValueError("UI retrieval requires site")
         return self
 
 

@@ -1,6 +1,6 @@
-"""第三层执行器注册表。
+﻿"""第三层执行器注册表。
 
-HTTP、数据库、性能、端口和 UI Procedure runner 均由本项目执行。
+HTTP、数据库、性能、端口和网页 Agent runner 均由本项目执行。
 """
 
 from __future__ import annotations
@@ -10,7 +10,6 @@ from typing import Any
 
 from .base import DeferredRunner, ExecutorRunner
 from .agent_ui import AgentUiRunner
-from .procedure import ProcedureRunner
 from .contracts import (
     CleanupResult,
     DEFERRED_EXECUTOR_KINDS,
@@ -39,7 +38,6 @@ class RunnerRegistry:
         database: ExecutorRunner | None = None,
         performance: ExecutorRunner | None = None,
         port: ExecutorRunner | None = None,
-        procedure: ExecutorRunner | None = None,
         agent_ui: ExecutorRunner | None = None,
     ):
         self._runners: dict[str, ExecutorRunner] = {
@@ -47,7 +45,6 @@ class RunnerRegistry:
             "database": database or DatabaseRunner(),
             "performance": performance or PerformanceRunner(),
             "tcp_port": port or PortRunner(),
-            "procedure_playwright": procedure or ProcedureRunner(),
             "stagehand_agent": agent_ui or AgentUiRunner(),
         }
 
@@ -71,17 +68,8 @@ class RunnerRegistry:
         artifact_dir: str | Path,
         artifact_bundle: Any,
         context: RuntimeContext,
-        *,
-        correlation: dict[str, str] | None = None,
     ) -> RunResult:
         runner = self.get(executor_kind)
-        if isinstance(runner, ProcedureRunner):
-            return runner.run(
-                Path(artifact_dir),
-                artifact_bundle,
-                context,
-                correlation=correlation,
-            )
         return runner.run(Path(artifact_dir), artifact_bundle, context)
 
     def preflight(
@@ -104,7 +92,6 @@ class RunnerRegistry:
 __all__ = [
     "AgentUiRunner",
     "DatabaseRunner",
-    "ProcedureRunner",
     "CleanupResult",
     "DEFERRED_EXECUTOR_KINDS",
     "DeferredRunner",

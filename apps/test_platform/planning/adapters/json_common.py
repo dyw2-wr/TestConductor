@@ -1,4 +1,4 @@
-"""JSON executor artifact 的 v4 公共写入逻辑。"""
+﻿"""JSON executor artifact 的 v4 公共写入逻辑。"""
 
 from __future__ import annotations
 
@@ -13,7 +13,6 @@ from apps.test_platform.intent.contracts import ApprovedTestDesignBundle
 from ..catalogs import PlanningCatalogSnapshot
 from ..contracts import (
     AgentUiExecution,
-    ProcedureExecution,
     DatabaseExecution,
     ExecutorArtifactBundle,
     ExecutorArtifactRef,
@@ -42,8 +41,6 @@ def sha256_bytes(value: bytes) -> str:
 
 def _execution_steps(execution):
     if isinstance(execution, AgentUiExecution):
-        return execution.rows
-    if isinstance(execution, ProcedureExecution):
         return execution.rows
     if isinstance(execution, HttpExecution):
         return execution.requests
