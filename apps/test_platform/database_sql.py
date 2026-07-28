@@ -1,4 +1,8 @@
-"""Shared safety checks for AI-authored read-only database queries."""
+"""Validation for one AI-authored database statement.
+
+The resource catalog owns only the connection/schema boundary.  SQL is always
+materialized in the execution plan so reviewers can see the exact statement.
+"""
 
 from __future__ import annotations
 
@@ -6,14 +10,18 @@ import re
 from collections.abc import Iterable, Mapping
 
 
-_WRITE_SQL_RE = re.compile(
-    r"\b(?:insert|update|delete|drop|alter|create|replace|truncate|attach|detach|"
-    r"pragma|vacuum|reindex|grant|revoke|merge|call|execute|copy|into)\b|"
-    r"\bfor\s+update\b",
+_WRITE_SQL_RE = re.compile(r"\b(?:insert|update|delete)\b", re.IGNORECASE)
+_ADMIN_SQL_RE = re.compile(
+    r"\b(?:drop|alter|create|replace|truncate|attach|detach|pragma|vacuum|"
+    r"reindex|grant|revoke|merge|call|execute|copy)\b|\bfor\s+update\b",
     re.IGNORECASE,
 )
 _TABLE_RE = re.compile(
     r"\b(?:from|join)\s+([A-Za-z_][A-Za-z0-9_.$]*)(?!\s*\()",
+    re.IGNORECASE,
+)
+_WRITE_TABLE_RE = re.compile(
+    r"\b(?:insert\s+into|update)\s+([A-Za-z_][A-Za-z0-9_.$]*)",
     re.IGNORECASE,
 )
 _CTE_RE = re.compile(
@@ -39,24 +47,37 @@ _SQL_WORDS = {
     "limit", "natural", "not", "null", "nulls", "offset", "on", "or", "order",
     "outer", "over", "partition", "preceding", "recursive", "right", "rows",
     "select", "then", "true", "union", "using", "when", "where", "window",
-    "with",
+    "with", "insert", "update", "delete", "set", "values", "returning",
+    "default", "conflict", "do", "nothing", "excluded",
 }
 
 
-def validate_read_only_sql(
+def sql_execution_policy(sql: str) -> str:
+    """Classify one supported statement as ``read_only`` or ``write``."""
+
+    normalized = str(sql or "").strip()
+    without_literals = re.sub(r"'(?:''|[^'])*'", " ", normalized)
+    if re.match(r"^(?:insert|update|delete)\b", without_literals, re.IGNORECASE):
+        return "write"
+    if re.match(r"^with\b", without_literals, re.IGNORECASE):
+        return "write" if _WRITE_SQL_RE.search(without_literals) else "read_only"
+    if re.match(r"^select\b", without_literals, re.IGNORECASE):
+        if re.search(r"\binto\b", without_literals, re.IGNORECASE):
+            raise ValueError("AI SQL 不允许 SELECT INTO")
+        return "read_only"
+    raise ValueError("AI SQL 只允许 SELECT/WITH/INSERT/UPDATE/DELETE")
+
+
+def validate_database_sql(
     sql: str,
     *,
+    execution_policy: str,
     allowed_tables: Iterable[str] | None = None,
     allowed_columns: Mapping[str, Iterable[str]] | None = None,
     allowed_parameter_refs: Iterable[str] | None = None,
     parameters_refs: dict[str, str] | None = None,
 ) -> str:
-    """Return normalized SQL or raise ``ValueError`` for unsafe drafts.
-
-    The check is intentionally conservative. It accepts one SELECT/CTE statement,
-    rejects comments and write/administrative keywords, binds values separately,
-    and optionally limits table names and runtime parameter references.
-    """
+    """Return normalized SQL after enforcing its approved access boundary."""
 
     if not isinstance(sql, str) or not sql.strip():
         raise ValueError("SQL 不能为空")
@@ -69,10 +90,15 @@ def validate_read_only_sql(
         normalized = normalized[:-1].rstrip()
     if ";" in normalized:
         raise ValueError("AI SQL 只能包含一条语句")
-    if not re.match(r"^(?:select|with)\b", normalized, re.IGNORECASE):
-        raise ValueError("AI SQL 只允许 SELECT 或 WITH 查询")
-    if _WRITE_SQL_RE.search(normalized):
-        raise ValueError("AI SQL 包含写入或数据库管理关键字")
+    if _ADMIN_SQL_RE.search(re.sub(r"'(?:''|[^'])*'", " ", normalized)):
+        raise ValueError("AI SQL 不允许 DDL 或数据库管理语句")
+    actual_policy = sql_execution_policy(normalized)
+    if execution_policy not in {"read_only", "write"}:
+        raise ValueError("execution_policy 必须是 read_only 或 write")
+    if actual_policy != execution_policy:
+        raise ValueError(
+            f"SQL 实际策略为 {actual_policy}，与声明的 {execution_policy} 不一致"
+        )
 
     table_allowlist = {
         str(item).strip().lower()
@@ -83,14 +109,17 @@ def validate_read_only_sql(
         cte_names = {item.lower() for item in _CTE_RE.findall(normalized)}
         referenced_tables = {
             item.lower()
-            for item in _TABLE_RE.findall(normalized)
+            for item in (
+                *_TABLE_RE.findall(normalized),
+                *_WRITE_TABLE_RE.findall(normalized),
+            )
             if item.lower() not in cte_names
         }
         unknown = sorted(referenced_tables - table_allowlist)
         if unknown:
             raise ValueError("AI SQL 引用了未登记数据表: " + "、".join(unknown))
         if not referenced_tables:
-            raise ValueError("AI SQL 必须查询已登记的数据表")
+            raise ValueError("AI SQL 必须访问已登记的数据表")
 
     if allowed_columns is not None:
         column_allowlist = {
@@ -190,8 +219,22 @@ def validate_read_only_sql(
     return normalized
 
 
+def validate_read_only_sql(
+    sql: str,
+    **kwargs,
+) -> str:
+    """Compatibility helper for historical read-only execution artifacts."""
+
+    return validate_database_sql(sql, execution_policy="read_only", **kwargs)
+
+
 def sql_parameter_names(sql: str) -> set[str]:
     return set(_PARAM_RE.findall(str(sql or "")))
 
 
-__all__ = ["sql_parameter_names", "validate_read_only_sql"]
+__all__ = [
+    "sql_execution_policy",
+    "sql_parameter_names",
+    "validate_database_sql",
+    "validate_read_only_sql",
+]

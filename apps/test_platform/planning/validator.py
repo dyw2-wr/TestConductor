@@ -6,7 +6,7 @@ import json
 import re
 
 from apps.test_platform.intent.contracts import ApprovedTestDesignBundle, StateImpactKind
-from apps.test_platform.database_sql import validate_read_only_sql
+from apps.test_platform.database_sql import validate_database_sql
 
 from .catalogs import PlanningCatalogSnapshot
 from .contracts import (
@@ -687,84 +687,63 @@ class TestPlanValidator:
         elif isinstance(execution, DatabaseExecution):
             for index, step in enumerate(execution.operations):
                 step_path = f"{path}.execution.operations[{index}]"
-                operation = catalog.get_database_operation(step.operation_ref)
-                if step.sql_origin != "catalog":
-                    schema = catalog.get_database_schema()
-                    catalog_effects.append("read_only")
-                    if schema is None:
-                        add(
-                            "DATABASE_AI_SCHEMA_MISSING",
-                            "AI SQL 缺少已登记数据库结构约束",
-                            step_path,
-                        )
-                    else:
-                        if (
-                            execution.connection_profile_ref
-                            != schema.connection_profile_ref
-                        ):
-                            add(
-                                "DATABASE_AI_CONNECTION_MISMATCH",
-                                "AI SQL 使用了未登记数据库连接",
-                                step_path,
-                            )
-                        try:
-                            validate_read_only_sql(
-                                step.sql or "",
-                                allowed_tables=[
-                                    item.name for item in schema.tables
-                                ],
-                                allowed_parameter_refs=(
-                                    schema.allowed_parameter_refs
-                                ),
-                                parameters_refs=step.parameters_refs,
-                            )
-                        except ValueError as exc:
-                            add(
-                                "DATABASE_AI_SQL_UNSAFE",
-                                str(exc),
-                                f"{step_path}.sql",
-                            )
-                    self._validate_generated_database_step(
-                        step,
-                        expectations,
-                        operations,
+                if step.sql_origin == "catalog":
+                    add(
+                        "DATABASE_CATALOG_SQL_RETIRED",
+                        "数据库 SQL 必须完整写入执行计划，不能引用资源目录查询",
                         step_path,
-                        add,
                     )
                     continue
-                if operation is not None:
-                    catalog_effects.append(operation.state_effect)
-                    if step.source.source_kind == "required_state":
-                        add(
-                            "SETUP_RESOURCE_READ_ONLY",
-                            "当前 database resource 全部只读，不能用于建立 required_state",
-                            step_path,
-                        )
-                if operation is None or (
-                    operation.connection_profile_ref
-                    != execution.connection_profile_ref
-                    or operation.operation_kind != step.operation_kind
-                    or operation.execution_policy != step.execution_policy
-                ):
+                schema = catalog.get_database_schema()
+                catalog_effects.append(
+                    "changes_state"
+                    if step.execution_policy == "write"
+                    else "read_only"
+                )
+                if schema is None:
                     add(
-                        "DATABASE_CATALOG_MISMATCH",
-                        "DB execution 与 catalog 不一致",
+                        "DATABASE_AI_SCHEMA_MISSING",
+                        "AI SQL 缺少已登记数据库结构约束",
                         step_path,
                     )
-                if step.execution_policy != "read_only":
-                    add(
-                        "DATABASE_POLICY_NOT_IMPLEMENTED",
-                        "当前第三层仅实现 read_only 数据库执行",
-                        f"{step_path}.execution_policy",
-                    )
-                self._validate_source_action(
-                    step.source, step.action, operation, operations, required_states, step_path, add
-                )
-                self._validate_assertions(
-                    step.assertions, expectations, operation, step_path, add, step.source
-                )
-                self._validate_data(
-                    step.data_bindings, step.operation_ref, catalog, step_path, add
+                else:
+                    if (
+                        execution.connection_profile_ref
+                        != schema.connection_profile_ref
+                    ):
+                        add(
+                            "DATABASE_AI_CONNECTION_MISMATCH",
+                            "AI SQL 使用了未登记数据库连接",
+                            step_path,
+                        )
+                    try:
+                        validate_database_sql(
+                            step.sql or "",
+                            execution_policy=step.execution_policy,
+                            allowed_tables=[
+                                item.name for item in schema.tables
+                            ],
+                            allowed_columns={
+                                item.name: [
+                                    column.name for column in item.columns
+                                ]
+                                for item in schema.tables
+                            },
+                            allowed_parameter_refs=schema.allowed_parameter_refs,
+                            parameters_refs=step.parameters_refs,
+                        )
+                    except ValueError as exc:
+                        add(
+                            "DATABASE_AI_SQL_UNSAFE",
+                            str(exc),
+                            f"{step_path}.sql",
+                        )
+                self._validate_generated_database_step(
+                    step,
+                    expectations,
+                    operations,
+                    step_path,
+                    add,
                 )
         elif isinstance(execution, PortExecution):
             for index, step in enumerate(execution.probes):
@@ -998,6 +977,14 @@ class TestPlanValidator:
                 "gt",
                 "lt",
             },
+            "affected_rows": {
+                "equals",
+                "not_equals",
+                "gte",
+                "lte",
+                "gt",
+                "lt",
+            },
             "exists": {
                 "equals",
                 "not_equals",
@@ -1050,6 +1037,21 @@ class TestPlanValidator:
                     "ASSERTION_COLUMN_REQUIRED",
                     "column 检查必须指定结果列",
                     f"{assertion_path}.column",
+                )
+            if step.execution_policy == "write" and assertion.kind != "affected_rows":
+                add(
+                    "DATABASE_WRITE_ASSERTION_INVALID",
+                    "数据库写 SQL 必须检查 affected_rows",
+                    assertion_path,
+                )
+            if (
+                step.execution_policy == "read_only"
+                and assertion.kind == "affected_rows"
+            ):
+                add(
+                    "DATABASE_READ_ASSERTION_INVALID",
+                    "只读 SQL 不能检查 affected_rows",
+                    assertion_path,
                 )
 
     @staticmethod

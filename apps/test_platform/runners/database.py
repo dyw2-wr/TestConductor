@@ -1,10 +1,8 @@
-"""只读数据库执行器。
+"""Database executor for exact SQL approved in an execution plan.
 
-数据库计划引用 ``connection_profile_ref`` 和已登记的 ``query_ref``；v5 也可携带已经
-人工审批的 AI 只读 SQL。真实连接由 ``RuntimeContext.database_connections`` 注入，
-AI SQL 还必须匹配 ``database_schemas`` 中的表、字段和参数白名单。为避免第三层误写
-数据，runner 在执行前拒绝多语句和所有明显写操作，即使底层账号权限配置错误也不会主动
-执行写 SQL。
+Current plans always carry the complete SQL.  The runner revalidates the
+statement against the injected schema boundary before opening the connection.
+Historical v4/v5 read-only artifacts remain runnable.
 """
 
 from __future__ import annotations
@@ -17,7 +15,7 @@ from time import perf_counter
 from typing import Any, Mapping
 from uuid import uuid4
 
-from apps.test_platform.database_sql import validate_read_only_sql
+from apps.test_platform.database_sql import validate_database_sql, validate_read_only_sql
 
 from .base import (
     ArtifactWorkspace,
@@ -28,6 +26,7 @@ from .base import (
 )
 from .contracts import (
     ReadOnlyDatabaseConnection,
+    DatabaseConnection,
     RunResult,
     RunStatus,
     RunnerError,
@@ -55,6 +54,7 @@ class _ValidatedQuery:
     sql: str
     parameters: Any
     assertions: list[Mapping[str, Any]]
+    execution_policy: str = "read_only"
 
 
 @dataclass(frozen=True)
@@ -63,6 +63,7 @@ class _ValidatedPlan:
     connection_value: Any
     max_rows: int
     queries: list[_ValidatedQuery]
+    contains_writes: bool = False
 
 
 def _lookup(mapping: Mapping[str, Any], name: str) -> Any:
@@ -127,8 +128,8 @@ def _compare(actual: Any, operator: str, expected: Any) -> bool:
     raise RunnerError("ASSERTION_INVALID", f"不支持的数据库断言操作符: {operator}")
 
 
-def _validate_connection_value(value: Any) -> None:
-    """Accept SQLite files or an explicitly injected read-only DB-API connection."""
+def _validate_connection_value(value: Any, *, requires_write: bool = False) -> None:
+    """Accept SQLite files or an explicitly permissioned DB-API connection."""
 
     if value is None:
         raise RunnerError("RUNTIME_RESOURCE_MISSING", "未注入数据库连接")
@@ -137,23 +138,31 @@ def _validate_connection_value(value: Any) -> None:
         if not path.is_file():
             raise RunnerError("RUNTIME_RESOURCE_MISSING", f"SQLite 文件不存在: {path}")
         return
-    if isinstance(value, ReadOnlyDatabaseConnection):
+    if isinstance(value, DatabaseConnection):
+        if requires_write and value.access_mode != "read_write":
+            raise RunnerError(
+                "RUNTIME_RESOURCE_INVALID",
+                "数据库写计划需要 access_mode=read_write 的运行时连接",
+            )
         return
     raise RunnerError(
         "RUNTIME_RESOURCE_INVALID",
-        "database runner 只接受 SQLite 文件路径，以便强制只读打开",
+        "database runner 只接受 SQLite 文件路径或 DatabaseConnection",
     )
 
 
-def _connection_for(value: Any) -> tuple[Any, bool]:
-    _validate_connection_value(value)
+def _connection_for(value: Any, *, requires_write: bool = False) -> tuple[Any, bool]:
+    _validate_connection_value(value, requires_write=requires_write)
     if isinstance(value, (str, Path)):
         path = Path(value)
-        # URI mode=ro 让 SQLite 自身也拒绝写入；不把路径写入 evidence。
-        conn = sqlite3.connect(f"file:{path.resolve().as_posix()}?mode=ro", uri=True)
+        mode = "rw" if requires_write else "ro"
+        conn = sqlite3.connect(
+            f"file:{path.resolve().as_posix()}?mode={mode}",
+            uri=True,
+        )
         conn.row_factory = sqlite3.Row
         return conn, True
-    if isinstance(value, ReadOnlyDatabaseConnection):
+    if isinstance(value, DatabaseConnection):
         return value.connection, value.close_when_done
     raise AssertionError("连接类型应已由 _validate_connection_value 校验")
 
@@ -163,6 +172,7 @@ class DatabaseRunner:
     payload_schemas = {
         "database-execution-plan.v4",
         "database-execution-plan.v5",
+        "database-execution-plan.v6",
     }
 
     def preflight(
@@ -191,7 +201,10 @@ class DatabaseRunner:
         external_action_started = [False]
         try:
             validated = self._validate_plan(artifact_dir, artifact_bundle, context)
-            connection, owned = _connection_for(validated.connection_value)
+            connection, owned = _connection_for(
+                validated.connection_value,
+                requires_write=validated.contains_writes,
+            )
             try:
                 for index, query in enumerate(validated.queries):
                     self._run_query(
@@ -203,6 +216,14 @@ class DatabaseRunner:
                         validated.max_rows,
                         external_action_started,
                     )
+                if validated.contains_writes:
+                    connection.commit()
+            except Exception:
+                if validated.contains_writes:
+                    rollback = getattr(connection, "rollback", None)
+                    if callable(rollback):
+                        rollback()
+                raise
             finally:
                 if owned:
                     connection.close()
@@ -244,7 +265,7 @@ class DatabaseRunner:
                 "ARTIFACT_SCHEMA_INVALID",
                 f"{payload_path.name} 不是受支持的数据库执行计划",
             )
-        allowed_payload_keys = {
+        common_payload_keys = {
             "schema_version",
             "executor_kind",
             "flow_id",
@@ -254,16 +275,49 @@ class DatabaseRunner:
             "plan_id",
             "plan_version",
             "connection_profile_ref",
-            "read_only",
-            "queries",
         }
+        if schema_version == "database-execution-plan.v6":
+            allowed_payload_keys = common_payload_keys | {
+                "contains_writes",
+                "warnings",
+                "statements",
+            }
+        else:
+            allowed_payload_keys = common_payload_keys | {"read_only", "queries"}
         if set(payload) != allowed_payload_keys:
             raise RunnerError(
                 "ARTIFACT_SCHEMA_INVALID",
-                "database payload 字段必须与 v4 adapter 精确一致",
+                "database payload 字段与对应版本不一致",
             )
-        if payload.get("read_only") is not True:
+        if (
+            schema_version != "database-execution-plan.v6"
+            and payload.get("read_only") is not True
+        ):
             raise RunnerError("QUERY_NOT_READ_ONLY", "database 计划必须声明 read_only=true")
+        contains_writes = (
+            payload.get("contains_writes")
+            if schema_version == "database-execution-plan.v6"
+            else False
+        )
+        if type(contains_writes) is not bool:
+            raise RunnerError(
+                "ARTIFACT_SCHEMA_INVALID",
+                "database v6 contains_writes 必须是 bool",
+            )
+        if schema_version == "database-execution-plan.v6":
+            warnings = payload.get("warnings")
+            if not isinstance(warnings, list) or any(
+                not isinstance(item, str) or not item.strip() for item in warnings
+            ):
+                raise RunnerError(
+                    "ARTIFACT_SCHEMA_INVALID",
+                    "database v6 warnings 必须是字符串数组",
+                )
+            if contains_writes and not warnings:
+                raise RunnerError(
+                    "ARTIFACT_SCHEMA_INVALID",
+                    "数据库写计划必须携带高风险警告",
+                )
 
         if "connection_ref" in payload:
             raise RunnerError(
@@ -277,7 +331,10 @@ class DatabaseRunner:
         if connection_ref not in context.database_connections:
             raise RunnerError("RUNTIME_RESOURCE_MISSING", f"未注入数据库连接: {connection_ref}")
         connection_value = context.database_connections[connection_ref]
-        _validate_connection_value(connection_value)
+        _validate_connection_value(
+            connection_value,
+            requires_write=contains_writes,
+        )
 
         if "max_rows" in payload:
             raise RunnerError(
@@ -286,9 +343,11 @@ class DatabaseRunner:
             )
         max_rows = 1000
 
-        query_specs = payload.get("queries")
+        query_specs = payload.get(
+            "statements" if schema_version == "database-execution-plan.v6" else "queries"
+        )
         if not isinstance(query_specs, list) or not query_specs:
-            raise RunnerError("ARTIFACT_SCHEMA_INVALID", "数据库计划必须包含非空 queries")
+            raise RunnerError("ARTIFACT_SCHEMA_INVALID", "数据库计划必须包含非空 SQL")
         traceability = workspace.manifest.get("traceability")
         allowed_expected_results: set[str] | None = None
         if isinstance(traceability, Mapping):
@@ -308,11 +367,20 @@ class DatabaseRunner:
             )
             for index, spec in enumerate(query_specs)
         ]
+        actual_contains_writes = any(
+            item.execution_policy == "write" for item in queries
+        )
+        if actual_contains_writes != contains_writes:
+            raise RunnerError(
+                "ARTIFACT_SCHEMA_INVALID",
+                "contains_writes 与 SQL execution_policy 不一致",
+            )
         return _ValidatedPlan(
             workspace=workspace,
             connection_value=connection_value,
             max_rows=max_rows,
             queries=queries,
+            contains_writes=contains_writes,
         )
 
     def _validate_query(
@@ -327,7 +395,7 @@ class DatabaseRunner:
     ) -> _ValidatedQuery:
         if not isinstance(spec, Mapping):
             raise RunnerError("ARTIFACT_SCHEMA_INVALID", f"queries[{index}] 必须是对象")
-        allowed_query_keys = {
+        legacy_query_keys = {
             "query_id",
             "source",
             "operation_ref",
@@ -343,23 +411,55 @@ class DatabaseRunner:
             "sql_origin",
             "knowledge_scope_id",
         }
+        current_statement_keys = {
+            "statement_id",
+            "source",
+            "operation_ref",
+            "execution_policy",
+            "risk_level",
+            "parameters_refs",
+            "assertions",
+            "sql",
+            "sql_origin",
+            "knowledge_scope_id",
+        }
+        allowed_query_keys = (
+            current_statement_keys
+            if schema_version == "database-execution-plan.v6"
+            else legacy_query_keys
+        )
         if not set(spec).issubset(allowed_query_keys):
             raise RunnerError(
                 "ARTIFACT_SCHEMA_INVALID",
                 f"queries[{index}] 包含 adapter 未声明字段",
             )
-        query_id_value = spec.get("query_id")
+        query_id_value = spec.get(
+            "statement_id"
+            if schema_version == "database-execution-plan.v6"
+            else "query_id"
+        )
         if not isinstance(query_id_value, str) or not query_id_value.strip():
             raise RunnerError(
                 "ARTIFACT_SCHEMA_INVALID",
-                f"queries[{index}].query_id 必须是非空字符串",
+                f"SQL[{index}] 缺少有效 ID",
             )
         query_id = query_id_value.strip()
         query_ref_value = spec.get("query_ref")
         sql_value = spec.get("sql")
+        execution_policy = str(spec.get("execution_policy") or "read_only")
+        if schema_version == "database-execution-plan.v6":
+            expected_risk = "high" if execution_policy == "write" else "normal"
+            if spec.get("risk_level") != expected_risk:
+                raise RunnerError(
+                    "ARTIFACT_SCHEMA_INVALID",
+                    f"{query_id}.risk_level 与 execution_policy 不一致",
+                )
         if sql_value is not None:
             if (
-                schema_version != "database-execution-plan.v5"
+                schema_version not in {
+                    "database-execution-plan.v5",
+                    "database-execution-plan.v6",
+                }
                 or query_ref_value is not None
                 or any(key in spec for key in ("query", "statement", "parameters"))
                 or spec.get("sql_origin") not in {
@@ -393,16 +493,22 @@ class DatabaseRunner:
                 if isinstance(item, Mapping)
             }
             try:
-                sql = validate_read_only_sql(
+                sql = validate_database_sql(
                     str(sql_value),
+                    execution_policy=execution_policy,
                     allowed_tables=tables,
                     allowed_columns=allowed_columns,
                     allowed_parameter_refs=allowed_parameter_refs,
                     parameters_refs=dict(spec.get("parameters_refs") or {}),
                 )
             except ValueError as exc:
-                raise RunnerError("QUERY_NOT_READ_ONLY", str(exc)) from exc
+                raise RunnerError("QUERY_INVALID", str(exc)) from exc
         else:
+            if schema_version == "database-execution-plan.v6":
+                raise RunnerError(
+                    "QUERY_INVALID",
+                    "database v6 必须包含本次审批的完整 SQL",
+                )
             if (
                 not isinstance(query_ref_value, str)
                 or not query_ref_value.strip()
@@ -474,6 +580,7 @@ class DatabaseRunner:
             sql=sql,
             parameters=parameters,
             assertions=assertions,
+            execution_policy=execution_policy,
         )
 
     @staticmethod
@@ -502,7 +609,7 @@ class DatabaseRunner:
             )
         kind = str(assertion.get("kind") or "").strip().lower()
         operator = str(assertion.get("operator") or "").strip().lower()
-        if kind == "row_count":
+        if kind in {"row_count", "affected_rows"}:
             allowed_operators = _ROW_COUNT_OPERATORS
         elif kind == "exists":
             allowed_operators = _EXISTS_OPERATORS
@@ -541,8 +648,9 @@ class DatabaseRunner:
         try:
             external_action_started[0] = True
             cursor.execute(query.sql, query.parameters)
+            affected_rows = max(int(cursor.rowcount or 0), 0)
             columns = [str(item[0]) for item in (cursor.description or [])]
-            rows = cursor.fetchmany(max_rows + 1)
+            rows = cursor.fetchmany(max_rows + 1) if cursor.description else []
         finally:
             close = getattr(cursor, "close", None)
             if callable(close):
@@ -554,7 +662,12 @@ class DatabaseRunner:
         passed = True
         for assertion in query.assertions:
             expected_result_id = assertion.get("expected_result_id")
-            ok, message = self._assert_query(assertion, normalized_rows, columns)
+            ok, message = self._assert_query(
+                assertion,
+                normalized_rows,
+                columns,
+                affected_rows,
+            )
             assertion_results.append(
                 {
                     "passed": ok,
@@ -572,6 +685,7 @@ class DatabaseRunner:
             {
                 "query_id": query_id,
                 "row_count": len(normalized_rows),
+                "affected_rows": affected_rows,
                 "truncated": truncated,
                 "columns": columns,
                 "assertions": assertion_results,
@@ -585,7 +699,12 @@ class DatabaseRunner:
                 status=RunStatus.PASSED if passed else RunStatus.FAILED,
                 message="all assertions passed" if passed else "one or more assertions failed",
                 duration_ms=(perf_counter() - started) * 1000,
-                details={"row_count": len(normalized_rows), "truncated": truncated, "assertions": assertion_results},
+                details={
+                    "row_count": len(normalized_rows),
+                    "affected_rows": affected_rows,
+                    "truncated": truncated,
+                    "assertions": assertion_results,
+                },
                 evidence=[evidence_name] if evidence_name else [],
             )
         )
@@ -595,6 +714,7 @@ class DatabaseRunner:
         assertion: Any,
         rows: list[dict[str, Any]],
         columns: list[str],
+        affected_rows: int,
     ) -> tuple[bool, str]:
         if not isinstance(assertion, Mapping):
             return False, "数据库断言必须是对象"
@@ -608,6 +728,16 @@ class DatabaseRunner:
             except (TypeError, ValueError):
                 ok = False
             return ok, f"row_count {operator}: {'passed' if ok else 'failed'}"
+        if kind == "affected_rows":
+            try:
+                ok = _compare(affected_rows, operator, expected)
+            except (TypeError, ValueError):
+                ok = False
+            return (
+                ok,
+                f"affected_rows {operator} expected={expected!r} "
+                f"actual={affected_rows!r}: {'passed' if ok else 'failed'}",
+            )
         if kind == "exists":
             actual = bool(rows)
             if operator in {"equals", "not_equals"} and not isinstance(expected, bool):

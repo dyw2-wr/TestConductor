@@ -180,7 +180,7 @@ class TestResourceProfile(models.Model):
         verbose_name="被测 API 基础地址",
         help_text="例如 https://staging.example.test/api。",
     )
-    database_query_file = models.FileField(
+    database_asset_file = models.FileField(
         upload_to="test_platform/resources/database/%Y/%m/",
         blank=True,
         verbose_name="数据库资料文件（可选）",
@@ -241,7 +241,7 @@ class TestResourceProfile(models.Model):
         if (self.api_openapi_file or self.api_asset_text.strip()) and self.api_base_url:
             channels.add("api")
         if (
-            self.database_query_file or self.database_asset_text.strip()
+            self.database_asset_file or self.database_asset_text.strip()
         ) and self.database_connection_ref:
             channels.add("database")
         if self.performance_profile_file or self.performance_asset_text.strip():
@@ -259,10 +259,10 @@ class TestResourceProfile(models.Model):
         if has_api_source != bool(self.api_base_url):
             errors["api_openapi_file"] = "接口资料和 API 基础地址必须同时配置"
         has_database_source = bool(
-            self.database_query_file or self.database_asset_text.strip()
+            self.database_asset_file or self.database_asset_text.strip()
         )
         if has_database_source != bool(self.database_connection_ref):
-            errors["database_query_file"] = "数据库资料和连接引用必须同时配置"
+            errors["database_asset_file"] = "数据库资料和连接引用必须同时配置"
         if bool(self.port_host) != (self.port_number is not None):
             errors["port_host"] = "TCP 主机和端口必须同时配置"
         if self.port_number is not None and not 1 <= self.port_number <= 65535:

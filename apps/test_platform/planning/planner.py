@@ -27,14 +27,7 @@ def _catalog_selection_guide(catalog: PlanningCatalogSnapshot) -> dict[str, Any]
             }
             for item in catalog.http_operations
         ],
-        "database": [
-            {
-                "catalog_ref": item.operation_ref,
-                "observable_refs": [value.observable_ref for value in item.observables],
-            }
-            for item in catalog.database_operations
-        ],
-        "database_ai_constraints": (
+        "database_access_boundary": (
             catalog.database_schema.model_dump(mode="json")
             if catalog.database_schema is not None
             else None
@@ -104,7 +97,7 @@ class DefaultPlanPromptBuilder:
         system = (
             "你是执行计划智能体。只输出符合给定 schema 的 JSON，不要输出解释。\n"
             "第一层 TestDesign 是测什么的唯一真值，PlanningCatalog 是当前目标环境可执行"
-            "边界的唯一真值。除受控的 database_queries SQL 草稿外，你只能选择 catalog 中"
+            "边界的唯一真值。除受控的 database_queries 完整可审核 SQL 外，你只能选择 catalog 中"
             "已经存在的 ref，不能创建或改写 ref。\n"
             "每个 scenario 只生成一个 flow，flow.stages 的列表顺序就是执行顺序；每个 stage "
             "只能选择一个 executor。不要生成 flow_id/stage_id，系统会按顺序确定性生成。"
@@ -115,8 +108,9 @@ class DefaultPlanPromptBuilder:
             "stage 重复覆盖完整场景。operation_id/expected_result_id/data_id/required_state_id/"
             "cleanup_goal_id 只能引用第一层已有 ID。operation 和 expected 必须放入与其 "
             "channel_hint 对应的 executor stage，stagehand_agent 对应 ui，tcp_port 对应 port。\n"
-            "expected_result 的 catalog_ref 是执行观察所需的 operation/profile，因此 UI 动作后"
-            "允许在 database stage 选择只读查询进行验证。data binding.consumer_id 必须指向"
+            "expected_result 的 catalog_ref 是执行观察所需的 operation/profile。数据库没有"
+            "预登记查询引用，database stage 必须输出完整 database_queries SQL。UI 动作后"
+            "允许在 database stage 生成只读查询进行验证。data binding.consumer_id 必须指向"
             "该 stage 的 operation_id、expected_result_id 或 setup required_state_id。\n"
             "每个 required_state 必须选择 data_guarantee(data_id) 或独立的 setup_stage。"
             "data_guarantee 只表示计划审核人和运行时 fixture provider 需要确认的外部预置数据"
@@ -130,10 +124,13 @@ class DefaultPlanPromptBuilder:
             "和 virtual_users；全部段的总时长不得超过所选 PerformanceProfile 的"
             "max_duration_seconds，任一段并发不得超过 max_virtual_users。不要把 profile 当作"
             "预制测试方案。"
-            "测试资源只描述数据库访问边界，不保存历史 SQL。数据库优先级必须是：先复用"
-            "approved_sql_knowledge 中适用的过往只读 SQL并填写 knowledge_scope_id；仍无法满足时"
-            "才新生成 SQL。选择或生成的 SQL 都只能是一条 SELECT/WITH，只能引用 database_ai_constraints"
-            "登记的表、字段和运行参数，禁止注释、字面凭据、写操作和管理语句。"
+            "测试资源只描述数据库连接、库表字段和参数访问边界，不保存 SQL 或查询引用。数据库"
+            "优先级必须是：先参考 approved_sql_knowledge 中适用的历史 SQL并填写 knowledge_scope_id；"
+            "仍无法满足时才新生成 SQL。每项只能是一条 SELECT/WITH/INSERT/UPDATE/DELETE，"
+            "只能引用 database_access_boundary 登记的表、字段和运行参数，禁止注释、字面凭据、"
+            "DDL 和管理语句。纯观察必须声明 execution_policy=read_only；只有已审批 TestDesign "
+            "明确要求数据库写入时才能声明 execution_policy=write。写操作使用 affected_rows "
+            "检查受影响行数，或另用只读语句验证最终状态。"
             "database_queries 的 expected_result_id/operator/expected 必须忠实翻译已审批预期，"
             "不得改变业务结果；check_column 必须是查询结果实际返回的列或别名。"
             "找不到可执行引用、数据库结构不足、目标不匹配或信息不足时，不要猜测，"
@@ -204,7 +201,7 @@ class DefaultPlanPromptBuilder:
                     role="user",
                     content=(
                         "执行计划审核人的修订意见如下。它允许修正 executor/stage/ref 映射、"
-                        "AI 只读 SQL、数据绑定和执行顺序，不是新的业务需求，也不能改写已审批"
+                        "AI SQL、参数引用和执行顺序，不是新的业务需求，也不能改写已审批"
                         "TestDesign、数据库结构约束或 PlanningCatalog：\n" + feedback
                     ),
                 )

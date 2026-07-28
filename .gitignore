@@ -26,3 +26,4 @@ __pycache__/
 server.out.log
 server.err.log
 staticfiles/
+.codex-tmp/

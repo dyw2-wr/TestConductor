@@ -50,26 +50,35 @@ CleanupCallable = Callable[..., CleanupResult]
 
 
 @dataclass(frozen=True)
-class ReadOnlyDatabaseConnection:
-    """A deployment-injected DB-API connection explicitly marked read-only.
+class DatabaseConnection:
+    """A deployment-injected DB-API connection with an explicit access mode.
 
     SQLite paths remain the default. Deployments using PostgreSQL/MySQL/etc.
-    may inject a connection only through this wrapper, making the read-only
-    policy visible at the TestConductor boundary instead of accepting arbitrary
-    connection objects.
+    may inject a connection only through this wrapper.  ``read_write`` permits
+    an already-approved write statement; it never bypasses plan approval.
     """
 
     connection: Any
     dialect: str = "dbapi"
     close_when_done: bool = False
+    access_mode: str = "read_only"
 
     def __post_init__(self) -> None:
         if self.connection is None or not hasattr(self.connection, "cursor"):
-            raise ValueError("ReadOnlyDatabaseConnection.connection 必须是 DB-API 连接")
+            raise ValueError("DatabaseConnection.connection 必须是 DB-API 连接")
         if not isinstance(self.dialect, str) or not self.dialect.strip():
-            raise ValueError("ReadOnlyDatabaseConnection.dialect 不能为空")
+            raise ValueError("DatabaseConnection.dialect 不能为空")
         if type(self.close_when_done) is not bool:
-            raise ValueError("ReadOnlyDatabaseConnection.close_when_done 必须是 bool")
+            raise ValueError("DatabaseConnection.close_when_done 必须是 bool")
+        if self.access_mode not in {"read_only", "read_write"}:
+            raise ValueError("DatabaseConnection.access_mode 必须是 read_only 或 read_write")
+
+
+@dataclass(frozen=True)
+class ReadOnlyDatabaseConnection(DatabaseConnection):
+    """Compatibility wrapper for historical read-only runtime configuration."""
+
+    access_mode: str = "read_only"
 
 
 @dataclass

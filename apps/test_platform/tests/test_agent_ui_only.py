@@ -1,4 +1,6 @@
 import json
+from importlib import import_module
+from types import SimpleNamespace
 
 from django.test import RequestFactory, SimpleTestCase
 
@@ -42,3 +44,51 @@ class AgentUiOnlyTests(SimpleTestCase):
         self.assertNotIn("sediment_playwright", payload["implemented_executors"])
         self.assertNotIn("procedure_playwright", payload["external_executors"])
         self.assertNotIn("sediment_playwright", payload["external_executors"])
+
+    def test_retired_ui_catalog_plans_are_superseded_by_migration(self):
+        migration = import_module(
+            "apps.test_platform.migrations.0008_supersede_retired_ui_catalog_plans"
+        )
+
+        class Query(list):
+            def iterator(self):
+                return iter(self)
+
+        class Artifact:
+            def __init__(self, *, catalog_snapshot=None, approved_bundle=None):
+                self.catalog_snapshot = catalog_snapshot or {}
+                self.approved_bundle = approved_bundle or {}
+                self.status = "approved"
+                self.last_error = ""
+                self.saved_fields = None
+
+            def save(self, *, update_fields):
+                self.saved_fields = tuple(update_fields)
+
+        stale_catalog = Artifact(catalog_snapshot={"procedure_profiles": []})
+        stale_bundle = Artifact(
+            approved_bundle={
+                "catalog_snapshot": {"sediment_profiles": []},
+            }
+        )
+        current = Artifact(catalog_snapshot={"agent_ui_profiles": []})
+        model = SimpleNamespace(
+            objects=SimpleNamespace(
+                filter=lambda **kwargs: Query(
+                    [stale_catalog, stale_bundle, current]
+                )
+            )
+        )
+        apps = SimpleNamespace(get_model=lambda *args: model)
+
+        migration.supersede_incompatible_execution_plans(apps, None)
+
+        for artifact in (stale_catalog, stale_bundle):
+            self.assertEqual(artifact.status, "superseded")
+            self.assertIn("已移除的旧 UI 编排目录", artifact.last_error)
+            self.assertEqual(
+                artifact.saved_fields,
+                ("status", "last_error", "updated_at"),
+            )
+        self.assertEqual(current.status, "approved")
+        self.assertIsNone(current.saved_fields)

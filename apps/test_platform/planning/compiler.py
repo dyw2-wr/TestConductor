@@ -14,7 +14,7 @@ from apps.test_platform.intent.contracts import (
     ApprovedTestDesignBundle,
     LogicalScenario,
 )
-from apps.test_platform.database_sql import validate_read_only_sql
+from apps.test_platform.database_sql import validate_database_sql
 
 from .adapters import (
     DatabaseCompiler,
@@ -27,8 +27,6 @@ from .catalogs import (
     AgentUiObservable,
     AgentUiOperation,
     LoadStage,
-    DatabaseObservable,
-    DatabaseOperation,
     HttpObservable,
     HttpOperation,
     PerformanceObservable,
@@ -529,7 +527,6 @@ class TestPlanCompiler:
         resolver = {
             ExecutorKind.STAGEHAND_AGENT: self._resolve_agent_ui,
             ExecutorKind.HTTP_API: self._resolve_http,
-            ExecutorKind.DATABASE: self._resolve_database,
             ExecutorKind.PERFORMANCE: self._resolve_performance,
             ExecutorKind.TCP_PORT: self._resolve_port,
         }[candidate.executor_kind]
@@ -587,8 +584,7 @@ class TestPlanCompiler:
             resource = catalog.get_http_operation(catalog_ref)
             expected_type = HttpOperation
         elif executor_kind == ExecutorKind.DATABASE:
-            resource = catalog.get_database_operation(catalog_ref)
-            expected_type = DatabaseOperation
+            raise ValueError("database stage 必须携带完整 SQL，不能选择 catalog ref")
         elif executor_kind == ExecutorKind.STAGEHAND_AGENT:
             resource = catalog.get_agent_ui_operation(catalog_ref)
             expected_type = AgentUiOperation
@@ -852,45 +848,6 @@ class TestPlanCompiler:
             rows=rows,
         )
 
-    def _resolve_database(
-        self, scenario: LogicalScenario, units: list[_ExecutionUnit], catalog
-    ) -> DatabaseExecution:
-        operations: list[DatabaseOperationPlan] = []
-        profiles: set[str] = set()
-        for index, unit in enumerate(units, start=1):
-            operation = catalog.get_database_operation(unit.catalog_ref)
-            if not isinstance(operation, DatabaseOperation):
-                raise ValueError(f"DB stage 引用了非 DB operation: {unit.catalog_ref}")
-            profiles.add(operation.connection_profile_ref)
-            allowed = {item.observable_ref: item for item in operation.observables}
-            assertions = []
-            for selection in unit.assertions:
-                observable = allowed.get(selection.observable_ref)
-                if not isinstance(observable, DatabaseObservable):
-                    raise ValueError(
-                        f"observable {selection.observable_ref} 不属于 {operation.operation_ref}"
-                    )
-                assertions.append(self._assertion(scenario, selection, observable))
-            operations.append(
-                DatabaseOperationPlan(
-                    operation_run_id=f"DB-{index:04d}",
-                    source=unit.source,
-                    operation_ref=operation.operation_ref,
-                    action=unit.action,
-                    operation_kind=operation.operation_kind,
-                    execution_policy=operation.execution_policy,
-                    data_bindings=self._bound_data(
-                        unit, ExecutorKind.DATABASE, catalog
-                    ),
-                    assertions=assertions,
-                )
-            )
-        if len(profiles) != 1:
-            raise ValueError("一个 database stage 必须使用同一 connection profile")
-        return DatabaseExecution(
-            connection_profile_ref=profiles.pop(), operations=operations
-        )
-
     def _resolve_ai_database_stage(
         self,
         scenario: LogicalScenario,
@@ -943,8 +900,26 @@ class TestPlanCompiler:
                     raise ValueError(
                         "AI SQL operation_id 必须是预期结果关联的业务操作"
                     )
-            normalized_sql = validate_read_only_sql(
+            if draft.execution_policy == "write" and logical_operation is None:
+                raise ValueError("数据库写 SQL 必须绑定已审批的 database operation")
+            if (
+                draft.execution_policy == "write"
+                and scenario.state_impact.impact.value == "read_only"
+            ):
+                raise ValueError("read_only 场景不能生成数据库写 SQL")
+            if (
+                draft.execution_policy == "write"
+                and draft.check_kind != "affected_rows"
+            ):
+                raise ValueError("数据库写 SQL 必须使用 affected_rows 检查受影响行数")
+            if (
+                draft.execution_policy == "read_only"
+                and draft.check_kind == "affected_rows"
+            ):
+                raise ValueError("只读 SQL 不能使用 affected_rows 检查")
+            normalized_sql = validate_database_sql(
                 draft.sql,
+                execution_policy=draft.execution_policy,
                 allowed_tables=allowed_tables,
                 allowed_columns={
                     table.name: [column.name for column in table.columns]
@@ -1025,10 +1000,10 @@ class TestPlanCompiler:
                     action=(
                         logical_operation.text
                         if logical_operation is not None
-                        else f"执行只读 SQL 验证：{expected.text}"
+                        else f"执行 SQL 验证：{expected.text}"
                     ),
-                    operation_kind="query",
-                    execution_policy="read_only",
+                    operation_kind="statement",
+                    execution_policy=draft.execution_policy,
                     sql=normalized_sql,
                     parameters_refs=dict(draft.parameters_refs),
                     sql_origin=sql_origin,

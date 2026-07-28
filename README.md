@@ -24,7 +24,7 @@ TestConductor 是一个本地运行、人工审批后执行的 AI 测试工作�
 | --- | --- |
 | UI | 由本地 Stagehand Agent 执行已审批 Action/Check |
 | API | 根据 OpenAPI、接口文档或文字说明生成受控 HTTP 请求与断言 |
-| 数据库 | 根据表结构、数据字典和知识生成只读 SQL 与检查 |
+| 数据库 | 根据表结构、数据字典和知识生成资源边界内的完整 SQL 与检查 |
 | 性能/压力 | 根据需求和资源上限生成负载阶段、指标和阈值 |
 | TCP 端口 | 对测试资源中明确登记的单个主机和端口执行连接检查 |
 
@@ -51,7 +51,7 @@ API、数据库、性能和端口测试由 AI 在资源约束内生成执行内�
 
 - UI Agent：起始 URL、资产最大步数以及逐项 Action/Check。
 - API：method、URL、参数、请求体和断言。
-- 数据库：连接引用、只读 SQL、参数和结果断言。
+- 数据库：连接引用、完整 SQL、读写策略、参数引用和结果断言；写操作会显示高风险提示。
 - 性能：目标、负载阶段、持续时间、并发量、指标和阈值。
 - 端口：已登记端点、超时和预期状态。
 
@@ -133,7 +133,7 @@ Windows 也可以直接运行：
 `examples/test_resources/` 提供可用于测试资源配置的合成示例：
 
 - `openapi.yaml`
-- `database_queries.json`
+- `database_queries.json`（历史文件名，内容是 `database-access-policy.v1` 数据库访问策略，不包含 SQL）
 - `performance_profiles.json`
 - `runtime_inputs.example.json`
 

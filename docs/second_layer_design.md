@@ -41,7 +41,7 @@ flowchart LR
 | 第一层系统 | candidate + request | 生成领域 ID，把 1-based 索引编译为稳定引用 | draft `TestDesign.v4` |
 | 第一层审核 | design + input snapshot + validation | 人工核对原文支持、推导、状态影响和 cleanup | `ApprovedTestDesignBundle.v4` |
 | 第二层输入 | approved design + 测试资源配置 | 精确读取正式格式；由模型整理网页 Agent、宽松接口、数据库和性能资料；统一生成 Catalog | 锁定的 planning 上下文 |
-| 第二层模型 | approved design 投影 + Catalog 投影 | 生成资源约束内的 ref、数据绑定、SQL 草稿、性能阶段和 stage 顺序 | `PlanCandidate` |
+| 第二层模型 | approved design 投影 + Catalog 投影 | 生成资源约束内的 ref、数据绑定、完整 SQL、读写策略、性能阶段和 stage 顺序 | `PlanCandidate` |
 | 第二层系统 | candidate + approved bundle + Catalog | 生成 flow/stage ID，解析 typed execution，编译 provisional artifacts | draft `TestPlan.v4` + artifacts |
 | 第二层审核 | plan + validation + artifact set | 人工核对映射、顺序、参数和最终产物 | `ApprovedTestPlanBundle.v4` |
 | 第三层 | approved plan bundle + RuntimeContext | 身份门禁、顺序执行、一次 cleanup、证据落盘 | `run-manifest.v4` |
@@ -133,15 +133,16 @@ question_id
 
 ```text
 HTTP operation: method/path/base_url_ref/state_effect/observables
-Database operation: read-only query ref/connection ref/observables
+Database schema: dialect/connection ref/tables/fields/allowed parameter refs
 Agent UI profile: start_url/max_steps/operations/observables
 Performance profile: driver/load stages/metrics
 DataBinding: executor + operation/profile + input slot -> runtime variable ref
 CleanupAction: handler/policy/required_data_slots/always_run/evidence_required
 ```
 
-Catalog 不保存 raw SQL、locator、绝对本机路径、凭据或运行时实际值。Catalog hash 只能证明
-当前内容未被替换；生产环境还需要提供审批身份、权限、版本、撤销和新鲜度策略。
+Catalog 不保存 raw SQL、locator、绝对本机路径、凭据或运行时实际值。数据库 Catalog 只保存
+`database_schema` 访问边界，已停用 `database_operations` 和预登记 `query_ref`。Catalog hash
+只能证明当前内容未被替换；生产环境还需要提供审批身份、权限、版本、撤销和新鲜度策略。
 
 ## 5. PlanCandidate 的权限边界
 
@@ -154,7 +155,7 @@ flows[]:
     executor_kind
     operations[]: operation_id + catalog_ref
     expected_results[]: expected_result_id + catalog_ref + observable_ref
-    database_queries[]: 资源边界内的 SQL 草稿和断言
+    database_queries[]: 资源边界内的完整 SQL、读写策略和断言
     performance_stages[]: duration_seconds + virtual_users
     data_bindings[]: data_id + consumer_id + binding_ref
   required_state_resolutions[]
@@ -239,7 +240,8 @@ Compiler/validator 还要求：
 
 ## 8. State Effect 和 Cleanup
 
-Compiler 聚合 flow 所有普通和 setup catalog resource 的状态影响：
+Compiler 聚合 flow 所有普通和 setup catalog resource 的状态影响；database stage 由本次
+SQL 的 `execution_policy` 决定：
 
 ```text
 有 changes_state -> changes_state
@@ -288,8 +290,10 @@ manifest 的 `artifact_refs` 只列编译 payload，payload hash 放在
 `manifest.json` sidecar，避免 manifest 自引用 hash。
 
 - `http_api`：method/path/base URL ref、bindings、HTTP assertions；HTTP runner 独立执行。
-- `database`：connection profile ref、read-only `query_ref`、bindings、assertions；DB runner
-  当前只接受 SQLite read-only。
+- `database`：connection profile ref、完整 SQL、参数引用、读写策略和 assertions；不从
+  Catalog 引用预登记查询。artifact 使用 `database-execution-plan.v6`，顶层包含
+  `contains_writes`、`warnings` 和 `statements[]`；每条 statement 包含 `execution_policy`、
+  `risk_level`、`sql_origin` 和完整 SQL。DB runner 对写操作要求显式高风险标记和可写运行时连接。
 - `performance`：driver ref、Catalog load stages 和 thresholds；性能 runner 独立执行，
   dry-run/live 是第三层参数。
 - `tcp_port`：`tcp-port-execution-plan.v4`，每个 probe 只探测一个已登记端点；运行时
@@ -337,6 +341,7 @@ data consumer binding
 cleanup slot/data/binding/variable ref
 provisional artifact 下载与 hash
 Agent 起始 URL、最大步数、Action/Check 和本地 runner 状态
+数据库完整 SQL、读写策略、risk_level、参数引用、assertions 和写操作高风险提示
 ```
 
 两个页面都不能用“模型已经生成”代替人工决定，也不能在审核后允许原地修改已绑定 hash 的
@@ -355,4 +360,4 @@ Agent 起始 URL、最大步数、Action/Check 和本地 runner 状态
 
 `examples/initial_multichannel_demo.py` 会让这些数据通过真实第一层 pipeline、第二层 compiler、
 审批、执行器和报告链路。演示数据不包含 API key、密码实际值或连接串；其中 SQL 仅针对演示
-进程临时创建的只读 SQLite 数据库。
+进程临时创建的 SQLite 数据库，默认示例保持只读。

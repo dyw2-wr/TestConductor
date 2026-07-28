@@ -1,6 +1,5 @@
 ﻿import json
 import copy
-import mimetypes
 from pathlib import Path
 from urllib.parse import urlencode
 
@@ -762,13 +761,13 @@ class TestResourceProfileForm(forms.ModelForm):
                 "接口资料说明（可选）",
                 "大致写明 method、path、参数和用途即可；与文件二选一。",
             ),
-            "database_query_file": (
+            "database_asset_file": (
                 "数据库资料文件（可选）",
-                "可上传 DDL、数据字典、表结构文档或现有策略；与文字说明二选一。",
+                "可上传 DDL、数据字典或表结构文档；这里只登记访问边界，不保存 SQL。",
             ),
             "database_asset_text": (
                 "数据库资料说明（可选）",
-                "大致写明数据库类型、可测试的表和字段即可，模型会整理结构。",
+                "写明数据库/Schema、允许访问的表和字段即可；模型不会把 SQL 放进资源目录。",
             ),
             "database_connection_ref": (
                 "数据库连接引用",
@@ -800,7 +799,7 @@ class TestResourceProfileForm(forms.ModelForm):
             self.add_error("ui_agent_asset_text", "网页 Agent 资料文件和文字说明选择一种即可")
         for file_name, text_name, label in (
             ("api_openapi_file", "api_asset_text", "接口资料"),
-            ("database_query_file", "database_asset_text", "数据库资料"),
+            ("database_asset_file", "database_asset_text", "数据库资料"),
             ("performance_profile_file", "performance_asset_text", "性能资料"),
         ):
             if cleaned.get(file_name) and str(cleaned.get(text_name) or "").strip():
@@ -816,7 +815,7 @@ class TestResourceProfileForm(forms.ModelForm):
                 and cleaned.get("api_base_url")
             ),
             "database": bool(
-                (cleaned.get("database_query_file") or cleaned.get("database_asset_text"))
+                (cleaned.get("database_asset_file") or cleaned.get("database_asset_text"))
                 and cleaned.get("database_connection_ref")
             ),
             "performance": bool(
@@ -849,7 +848,7 @@ class TestResourceProfileForm(forms.ModelForm):
                 "api_openapi_file",
                 "api_asset_text",
                 "api_base_url",
-                "database_query_file",
+                "database_asset_file",
                 "database_asset_text",
                 "database_connection_ref",
                 "performance_profile_file",
@@ -873,7 +872,7 @@ class TestResourceProfileForm(forms.ModelForm):
             ),
             "api": ("api_openapi_file", "api_asset_text", "api_base_url"),
             "database": (
-                "database_query_file",
+                "database_asset_file",
                 "database_asset_text",
                 "database_connection_ref",
             ),
@@ -1326,9 +1325,17 @@ def _stage_resources(stage: dict) -> list[str]:
             lines.extend(_assertion_line(item) for item in request.get("assertions", []))
         return lines
     if kind == "database":
-        lines = [f"{stage.get('order', '?')}. 数据库测试（只读）"]
+        has_writes = any(
+            item.get("execution_policy") == "write"
+            for item in execution.get("operations", [])
+        )
+        lines = [
+            f"{stage.get('order', '?')}. "
+            + ("数据库测试（⚠ 包含写操作）" if has_writes else "数据库测试（只读）")
+        ]
         for operation in execution.get("operations", []):
-            lines.append(f"查询: {operation.get('operation_ref') or '-'}")
+            policy = "写操作" if operation.get("execution_policy") == "write" else "只读"
+            lines.append(f"{policy}: {operation.get('sql') or operation.get('operation_ref') or '-'}")
             lines.extend(_assertion_line(item) for item in operation.get("assertions", []))
         return lines
     if kind == "performance":
@@ -1618,12 +1625,13 @@ class TestResourceProfileAdmin(SingleRecordActionAdmin, admin.ModelAdmin):
                     "classes": ("resource-section", "resource-database"),
                     "description": format_html(
                         '<div class="tb-resource-guide"><p><strong>格式：</strong>DDL、数据字典、表结构文档或简单文字。'
-                        '<strong>作用：</strong>让模型整理可读表字段，并在该范围内生成只读 SQL 草稿。</p>'
+                        '<strong>作用：</strong>只登记数据库/Schema、允许访问的表字段和连接引用；'
+                        'SQL 由执行计划 AI 生成并在审核页完整展示。</p>'
                         '<a class="tb-example-download" href="{}">下载可选结构化示例</a></div>',
                         database_url,
                     ),
                     "fields": (
-                        "database_query_file",
+                        "database_asset_file",
                         "database_asset_text",
                         "database_connection_ref",
                     ),
@@ -2505,28 +2513,7 @@ class ExecutionPlanArtifactAdmin(
     page_title = "执行计划"
     page_description = "审批后可单个或批量运行，同一计划可以重复运行"
     polling_statuses = (ExecutionPlanArtifact.Status.GENERATING,)
-    audit_payload_specs = (
-        (
-            "catalog_snapshot",
-            "资源目录快照",
-            "执行前比较当前资源，资源发生漂移时阻止旧计划运行",
-        ),
-        (
-            "compilation_result",
-            "编译记录",
-            "审批、修订并定位每个 flow、stage 和执行文件",
-        ),
-        (
-            "review_payload",
-            "审批记录",
-            "绑定审批决定、意见、审核人和计划指纹",
-        ),
-        (
-            "approved_bundle",
-            "执行交接包",
-            "审批通过后作为执行协调器唯一接受的正式输入",
-        ),
-    )
+    audit_payload_specs = ()
     list_display = (
         "marked_status",
         "title",
@@ -2570,7 +2557,6 @@ class ExecutionPlanArtifactAdmin(
         "approval_focus_preview",
         "page_execution_basis",
         "validation_summary",
-        "execution_artifact_preview",
         "system_audit_summary",
         "status",
         "generation_progress_display",
@@ -2588,12 +2574,11 @@ class ExecutionPlanArtifactAdmin(
             "执行计划",
             {
                 "fields": (
-                    "execution_plan_preview",
-                    "execution_input_summary",
                     "approval_focus_preview",
+                    "execution_input_summary",
                     "validation_summary",
+                    "execution_plan_preview",
                     "page_execution_basis",
-                    "execution_artifact_preview",
                 )
             },
         ),
@@ -2633,17 +2618,6 @@ class ExecutionPlanArtifactAdmin(
         "delete_selected",
     )
 
-    def get_urls(self):
-        opts = self.model._meta
-        custom = [
-            path(
-                "<path:object_id>/artifact/<str:flow_id>/<str:stage_id>/<path:path_ref>",
-                self.admin_site.admin_view(self.download_execution_artifact),
-                name=f"{opts.app_label}_{opts.model_name}_execution_artifact",
-            )
-        ]
-        return custom + super().get_urls()
-
     def has_add_permission(self, request):
         return False
 
@@ -2672,19 +2646,15 @@ class ExecutionPlanArtifactAdmin(
             in UI_EXECUTOR_KINDS
             for stage in stages
         )
-        execution_fields = ["execution_plan_preview"]
-        if (obj.execution_input or {}).get("variables"):
-            execution_fields.append("execution_input_summary")
+        execution_fields = []
         if stages:
             execution_fields.append("approval_focus_preview")
+        if (obj.execution_input or {}).get("variables"):
+            execution_fields.append("execution_input_summary")
         execution_fields.append("validation_summary")
+        execution_fields.append("execution_plan_preview")
         if has_ui:
             execution_fields.append("page_execution_basis")
-        if any(
-            artifact.get("artifact_refs")
-            for artifact in (obj.compilation_result or {}).get("artifacts") or []
-        ):
-            execution_fields.append("execution_artifact_preview")
         title, options = fieldsets[0]
         fieldsets[0] = (title, {**options, "fields": tuple(execution_fields)})
         return tuple(fieldsets)
@@ -2878,7 +2848,7 @@ class ExecutionPlanArtifactAdmin(
     def run_execution_plan(self, request, obj):
         if obj.status == ExecutionPlanArtifact.Status.REVIEW:
             self.approve_execution_plan(request, self.model.objects.filter(pk=obj.pk))
-        obj.refresh_from_db(fields=("status",))
+        obj.refresh_from_db()
         if obj.status == ExecutionPlanArtifact.Status.APPROVED:
             self._queue_run(request, obj)
             return HttpResponseRedirect(
@@ -2936,7 +2906,7 @@ class ExecutionPlanArtifactAdmin(
                     request,
                     self.model.objects.filter(pk=artifact.pk),
                 )
-                artifact.refresh_from_db(fields=("status",))
+                artifact.refresh_from_db()
             if artifact.status != ExecutionPlanArtifact.Status.APPROVED:
                 self.message_user(
                     request,
@@ -3102,57 +3072,6 @@ class ExecutionPlanArtifactAdmin(
             ),
         )
 
-    @admin.display(description="各分类生成的执行文件")
-    def execution_artifact_preview(self, obj):
-        artifacts = (obj.compilation_result or {}).get("artifacts") or []
-        if not artifacts:
-            return "尚未生成执行文件"
-        cards = []
-        artifact_counts = {}
-        for artifact in artifacts:
-            executor = str(artifact.get("executor_kind") or "")
-            category = EXECUTOR_CATEGORY.get(executor, executor)
-            artifact_counts[category] = artifact_counts.get(category, 0) + 1
-            refs = artifact.get("artifact_refs") or []
-            files = [
-                (
-                    f"{item.get('kind')}: {item.get('path_ref')} "
-                    f"({str(item.get('sha256') or '')[:15]}…)"
-                )
-                for item in refs
-                if item.get("kind") != "manifest"
-            ]
-            details = [
-                self._execution_artifact_detail(obj, artifact, ref)
-                for ref in refs
-                if ref.get("kind") != "manifest"
-            ]
-            cards.append(
-                format_html(
-                    "<details class='tb-artifact-stage'><summary>"
-                    "<span class='tb-artifact-stage-title'><strong>{}</strong>"
-                    "<code>{}</code></span>"
-                    "<span class='tb-artifact-stage-files'>{}</span>"
-                    "<span class='tb-artifact-stage-action'>查看生成文件</span>"
-                    "</summary><div class='tb-artifact-stage-body'>"
-                    "<div class='tb-generated-files'>{}</div></div></details>",
-                    TEST_CATEGORY_LABELS.get(category, category),
-                    artifact.get("stage_id") or "-",
-                    _display_lines(files),
-                    format_html_join("", "{}", ((item,) for item in details)),
-                )
-            )
-        return format_html(
-            "<div class='tb-artifact-summary'><p class='tb-scope-line'>"
-            "<strong>执行内容：</strong>{}</p>"
-            "<div class='tb-artifact-stage-list'>{}</div></div>",
-            "、".join(
-                f"{TEST_CATEGORY_LABELS.get(category, category)} {count} 组"
-                for category, count in artifact_counts.items()
-            ),
-            format_html_join("", "{}", ((card,) for card in cards)),
-        )
-
     @staticmethod
     def _json_text(value):
         return json.dumps(
@@ -3250,7 +3169,12 @@ class ExecutionPlanArtifactAdmin(
                         lines.append(
                             f"params_{index} = {quoted(parameters)}"
                         )
-                    lines.append(f"result_{index} = db.query(\"\"\"")
+                    method = (
+                        "execute"
+                        if item.get("execution_policy") == "write"
+                        else "query"
+                    )
+                    lines.append(f"result_{index} = db.{method}(\"\"\"")
                     sql_lines = str(item["sql"]).strip().splitlines()
                     lines.extend(sql_lines)
                     lines.append(
@@ -3266,6 +3190,8 @@ class ExecutionPlanArtifactAdmin(
                 for assertion in item.get("assertions") or []:
                     if assertion.get("kind") == "row_count":
                         actual = f"result_{index}.row_count"
+                    elif assertion.get("kind") == "affected_rows":
+                        actual = f"result_{index}.affected_rows"
                     elif assertion.get("kind") == "exists":
                         actual = f"bool(result_{index}.rows)"
                     else:
@@ -3323,6 +3249,7 @@ class ExecutionPlanArtifactAdmin(
         kind = execution.get("kind")
         rows = []
         headers = []
+        notice = ""
         if kind == "stagehand_agent":
             headers = ["步骤", "Agent 页面操作", "检查"]
             for index, item in enumerate(execution.get("rows") or [], start=1):
@@ -3356,17 +3283,31 @@ class ExecutionPlanArtifactAdmin(
                     ]
                 )
         elif kind == "database":
-            headers = ["SQL 来源", "实际 SQL/查询", "运行参数", "检查"]
+            headers = ["风险/类型", "SQL 来源", "实际 SQL", "运行参数", "检查"]
             origin_labels = {
-                "catalog": "导入计划中的查询引用",
+                "catalog": "旧版目录查询引用（已停用）",
                 "knowledge_reused": "复用业务知识库 SQL",
                 "ai_generated": "AI 新生成，等待人工审批",
             }
+            has_writes = any(
+                item.get("execution_policy") == "write"
+                for item in execution.get("operations") or []
+            )
+            if has_writes:
+                notice = mark_safe(
+                    "<div class='tb-database-risk'>⚠ 高风险：本执行计划包含数据库写操作。"
+                    "审批并运行后会修改测试环境数据，请逐条核对 SQL、目标表和参数。</div>"
+                )
             for item in execution.get("operations") or []:
                 sql_origin = item.get("sql_origin") or "catalog"
                 operation_ref = str(item.get("operation_ref") or "")
                 rows.append(
                     [
+                        (
+                            "⚠ 高风险写操作"
+                            if item.get("execution_policy") == "write"
+                            else "只读查询"
+                        ),
                         origin_labels.get(sql_origin, sql_origin),
                         item.get("sql") or operation_ref or "-",
                         cls._json_text(item.get("parameters_refs") or {})
@@ -3429,8 +3370,9 @@ class ExecutionPlanArtifactAdmin(
                 "<p class='tb-capability-warning'>尚无可展示的具体测试内容。</p>"
             )
         return format_html(
-            "<div class='tb-semantic-preview'><table><thead><tr>{}</tr></thead>"
+            "{}<div class='tb-semantic-preview'><table><thead><tr>{}</tr></thead>"
             "<tbody>{}</tbody></table></div>",
+            notice,
             format_html_join("", "<th>{}</th>", ((item,) for item in headers)),
             format_html_join(
                 "",
@@ -3446,172 +3388,6 @@ class ExecutionPlanArtifactAdmin(
                     for row in rows
                 ),
             ),
-        )
-
-    def _execution_artifact_path(self, obj, artifact, ref):
-        from .planning.artifact_paths import generated_files_root
-
-        root = Path(settings.TEST_PLATFORM_ARTIFACT_ROOT).resolve()
-        artifact_root = (root / Path(obj.artifact_root_ref)).resolve()
-        artifact_root.relative_to(root)
-        stage_root = (
-            generated_files_root(artifact_root, artifact.get("executor_kind"))
-            / obj.plan_id
-            / f"v{obj.version}"
-            / str(artifact.get("flow_id"))
-            / str(artifact.get("stage_id"))
-        ).resolve()
-        if not stage_root.is_dir():
-            stage_root = (
-                artifact_root
-                / obj.plan_id
-                / f"v{obj.version}"
-                / str(artifact.get("flow_id"))
-                / str(artifact.get("stage_id"))
-            ).resolve()
-        stage_root.relative_to(artifact_root)
-        source_path = (stage_root / str(ref.get("path_ref") or "")).resolve()
-        source_path.relative_to(stage_root)
-        return source_path
-
-    def _execution_artifact_detail(self, obj, artifact, ref):
-        kind = str(ref.get("kind") or "")
-        label = {
-            "workbook": "查看 UI 测试步骤",
-            "payload": "查看执行配置",
-            "pytest_source": "查看完整 pytest 代码",
-        }.get(kind, "查看文件内容")
-        try:
-            source_path = self._execution_artifact_path(obj, artifact, ref)
-            if kind == "workbook":
-                content = self._workbook_preview(source_path)
-            else:
-                raw = source_path.read_text(encoding="utf-8")
-                if len(raw) > 1_000_000:
-                    raw = raw[:1_000_000] + "\n\n内容过长，页面仅显示前 1 MB。"
-                if kind == "payload" or source_path.suffix.lower() == ".json":
-                    try:
-                        raw = json.dumps(
-                            json.loads(raw),
-                            ensure_ascii=False,
-                            indent=2,
-                        )
-                    except json.JSONDecodeError:
-                        pass
-                content = format_html("<pre class='tb-source-preview'>{}</pre>", raw)
-        except (OSError, UnicodeError, ValueError) as exc:
-            content = format_html(
-                "<p class='tb-capability-warning'>无法读取生成文件：{}</p>",
-                str(exc) or "文件不存在",
-            )
-        download_url = reverse(
-            f"admin:{self.model._meta.app_label}_{self.model._meta.model_name}_execution_artifact",
-            args=[
-                obj.pk,
-                artifact.get("flow_id"),
-                artifact.get("stage_id"),
-                ref.get("path_ref"),
-            ],
-        )
-        return format_html(
-            "<section class='tb-execution-detail'>"
-            "<header><h4>{}</h4><code>{}</code>"
-            "<a class='tb-audit-download' href='{}'>下载原始文件</a></header>"
-            "{}</section>",
-            label,
-            ref.get("path_ref") or "-",
-            download_url,
-            content,
-        )
-
-    @staticmethod
-    def _workbook_preview(source_path):
-        from openpyxl import load_workbook
-
-        workbook = load_workbook(source_path, read_only=True, data_only=True)
-        try:
-            sheet = workbook["Case"] if "Case" in workbook.sheetnames else workbook.active
-            max_row = sheet.max_row
-            values = list(sheet.iter_rows(values_only=True, max_row=201))
-        finally:
-            workbook.close()
-        if not values:
-            return format_html("<p>执行表为空</p>")
-        headers = [str(value or "-") for value in values[0]]
-        header_html = format_html_join("", "<th>{}</th>", ((item,) for item in headers))
-        row_html = []
-        for row in values[1:]:
-            cells = list(row) + [""] * max(0, len(headers) - len(row))
-            row_html.append(
-                format_html(
-                    "<tr>{}</tr>",
-                    format_html_join(
-                        "",
-                        "<td>{}</td>",
-                        ((str(value or ""),) for value in cells[:len(headers)]),
-                    ),
-                )
-            )
-        suffix = (
-            format_html("<p>页面仅显示前 200 条步骤。</p>")
-            if max_row and max_row > 201
-            else ""
-        )
-        return format_html(
-            "<div class='tb-workbook-preview'><table><thead><tr>{}</tr></thead>"
-            "<tbody>{}</tbody></table>{}</div>",
-            header_html,
-            format_html_join("", "{}", ((row,) for row in row_html)),
-            suffix,
-        )
-
-    def download_execution_artifact(
-        self,
-        request,
-        object_id,
-        flow_id,
-        stage_id,
-        path_ref,
-    ):
-        obj = self.get_object(request, object_id)
-        if obj is None:
-            raise Http404("执行计划不存在")
-        if not self.has_view_or_change_permission(request, obj):
-            raise PermissionDenied
-        artifact = next(
-            (
-                item
-                for item in (obj.compilation_result or {}).get("artifacts") or []
-                if str(item.get("flow_id")) == flow_id
-                and str(item.get("stage_id")) == stage_id
-            ),
-            None,
-        )
-        if artifact is None:
-            raise Http404("执行阶段不存在")
-        ref = next(
-            (
-                item
-                for item in artifact.get("artifact_refs") or []
-                if item.get("kind") != "manifest"
-                and str(item.get("path_ref")) == path_ref
-            ),
-            None,
-        )
-        if ref is None:
-            raise Http404("执行文件不存在")
-        try:
-            source_path = self._execution_artifact_path(obj, artifact, ref)
-        except (OSError, ValueError) as exc:
-            raise Http404("执行文件路径无效") from exc
-        if not source_path.is_file():
-            raise Http404("执行文件不存在")
-        content_type = mimetypes.guess_type(source_path.name)[0] or "application/octet-stream"
-        return FileResponse(
-            source_path.open("rb"),
-            as_attachment=True,
-            filename=source_path.name,
-            content_type=content_type,
         )
 
     def _review(self, request, queryset, decision):

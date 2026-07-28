@@ -541,11 +541,14 @@ class _PlanningCatalogContent(StrictCatalogModel):
         _require_unique(self.available_executors, "PlanningCatalogSnapshot.available_executors")
 
         available = set(self.available_executors)
+        if self.database_operations:
+            raise ValueError(
+                "database_operations 已停用；资源目录只能登记 database_schema"
+            )
         if "http_api" in available and not self.http_operations:
             raise ValueError("http_api is available but http_operations is empty")
         if (
             "database" in available
-            and not self.database_operations
             and self.database_schema is None
         ):
             raise ValueError(
@@ -560,7 +563,6 @@ class _PlanningCatalogContent(StrictCatalogModel):
 
         definitions: list[tuple[str, str]] = []
         definitions.extend((item.operation_ref, "http operation") for item in self.http_operations)
-        definitions.extend((item.operation_ref, "database operation") for item in self.database_operations)
         definitions.extend((item.probe_ref, "tcp port probe") for item in self.tcp_port_probes)
         definitions.extend((item.profile_ref, "performance profile") for item in self.performance_profiles)
         definitions.extend((item.profile_ref, "agent UI profile") for item in self.agent_ui_profiles)
@@ -568,8 +570,6 @@ class _PlanningCatalogContent(StrictCatalogModel):
         definitions.extend((item.action_ref, "cleanup action") for item in self.cleanup_actions)
         for operation in self.http_operations:
             definitions.extend((item.observable_ref, "http observable") for item in operation.observables)
-        for operation in self.database_operations:
-            definitions.extend((item.observable_ref, "database observable") for item in operation.observables)
         for probe in self.tcp_port_probes:
             definitions.extend((item.observable_ref, "tcp port observable") for item in probe.observables)
         for profile in self.performance_profiles:
@@ -587,7 +587,6 @@ class _PlanningCatalogContent(StrictCatalogModel):
 
         bindings = {item.binding_ref: item for item in self.data_bindings}
         http_operations = {item.operation_ref: item for item in self.http_operations}
-        database_operations = {item.operation_ref: item for item in self.database_operations}
         endpoint_keys = [(item.host_ref, item.port) for item in self.tcp_port_probes]
         if len(set(endpoint_keys)) != len(endpoint_keys):
             raise ValueError("tcp_port_probes 不能重复登记同一个 host_ref + port")
@@ -601,19 +600,6 @@ class _PlanningCatalogContent(StrictCatalogModel):
                 operation.allowed_binding_refs,
                 bindings,
             )
-        for operation in self.database_operations:
-            for ref in operation.allowed_binding_refs:
-                binding = bindings.get(ref)
-                if binding is None:
-                    raise ValueError(f"database operation references unknown binding_ref: {ref}")
-                if (
-                    binding.executor_kind != "database"
-                    or binding.operation_ref != operation.operation_ref
-                ):
-                    raise ValueError(
-                        f"binding_ref {ref} does not belong to database operation "
-                        f"{operation.operation_ref}"
-                    )
         for binding in self.data_bindings:
             cleanup_action = cleanup_actions.get(binding.operation_ref)
             if cleanup_action is not None:
@@ -652,8 +638,10 @@ class _PlanningCatalogContent(StrictCatalogModel):
                 target = http_operations.get(binding.operation_ref)
                 allowed = target.allowed_binding_refs if target else []
             elif binding.executor_kind == "database":
-                target = database_operations.get(binding.operation_ref)
-                allowed = target.allowed_binding_refs if target else []
+                raise ValueError(
+                    "database 参数直接使用 database_schema.allowed_parameter_refs，"
+                    "不在 catalog 中登记 DataBinding"
+                )
             elif binding.executor_kind == "tcp_port":
                 raise ValueError(
                     "tcp_port 不接受动态 DataBinding；host/port 必须固定在 catalog probe"
@@ -736,9 +724,6 @@ class PlanningCatalogSnapshot(_PlanningCatalogContent):
     def get_http_operation(self, ref: str) -> HttpOperation | None:
         return next((item for item in self.http_operations if item.operation_ref == ref), None)
 
-    def get_database_operation(self, ref: str) -> DatabaseOperation | None:
-        return next((item for item in self.database_operations if item.operation_ref == ref), None)
-
     def get_database_schema(self) -> DatabaseSchema | None:
         return self.database_schema
 
@@ -776,7 +761,6 @@ class PlanningCatalogSnapshot(_PlanningCatalogContent):
             HttpObservable | DatabaseObservable | PortObservable | PerformanceObservable | AgentUiObservable
         ] = []
         values.extend(item for operation in self.http_operations for item in operation.observables)
-        values.extend(item for operation in self.database_operations for item in operation.observables)
         values.extend(item for probe in self.tcp_port_probes for item in probe.observables)
         values.extend(item for profile in self.performance_profiles for item in profile.observables)
         values.extend(item for profile in self.agent_ui_profiles for item in profile.observables)
@@ -785,7 +769,6 @@ class PlanningCatalogSnapshot(_PlanningCatalogContent):
     def get_ref(self, ref: str) -> CatalogResource | None:
         primary: list[CatalogResource] = [
             *self.http_operations,
-            *self.database_operations,
             *self.tcp_port_probes,
             *self.performance_profiles,
             *self.agent_ui_profiles,

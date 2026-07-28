@@ -366,7 +366,7 @@ def _create_database_profile(
     )
     _save_json_field(
         profile,
-        "database_query_file",
+        "database_asset_file",
         f"{fixture.key}-database-policy-{run_tag}.json",
         fixture.policy(),
     )
@@ -420,7 +420,7 @@ def _create_composite_profile(
     )
     _save_json_field(
         profile,
-        "database_query_file",
+        "database_asset_file",
         f"commerce-composite-database-policy-{run_tag}.json",
         fixture.policy(),
     )
@@ -622,6 +622,7 @@ def _database_plan_candidate(
                                 "operation_id": f"{design_id}-OP-0001",
                                 "expected_result_id": f"{design_id}-EXP-0001",
                                 "sql": fixture.sql,
+                                "execution_policy": "read_only",
                                 "parameters_refs": {},
                                 "check_kind": "column",
                                 "check_column": fixture.check_column,
@@ -674,6 +675,7 @@ def _composite_plan_candidate(
                                 "operation_id": f"{design_id}-OP-0002",
                                 "expected_result_id": f"{design_id}-EXP-0002",
                                 "sql": fixture.sql,
+                                "execution_policy": "read_only",
                                 "parameters_refs": {},
                                 "check_kind": "column",
                                 "check_column": fixture.check_column,
@@ -761,6 +763,7 @@ def _failure_chain_plan_candidate(
                                 "operation_id": f"{design_id}-OP-0002",
                                 "expected_result_id": f"{design_id}-EXP-0002",
                                 "sql": fixture.sql,
+                                "execution_policy": "read_only",
                                 "parameters_refs": {},
                                 "check_kind": "column",
                                 "check_column": fixture.check_column,
@@ -892,9 +895,8 @@ def _verify_database_expected_failure(
         if len(payload_paths) == 1
         else {}
     )
-    assertion = (
-        (((payload.get("queries") or [{}])[0]).get("assertions") or [{}])[0]
-    )
+    database_steps = payload.get("statements") or payload.get("queries") or [{}]
+    assertion = (((database_steps[0]).get("assertions") or [{}])[0])
     stages = (
         ((report.get("flows") or [{}])[0]).get("stages") or []
     )
@@ -1613,7 +1615,7 @@ class Command(BaseCommand):
                     "本命令的 API、性能和 TCP 复合资源使用命令进程内的临时本地"
                     "服务，数据库连接映射也只在命令运行期间注入。相关资源已在"
                     "命令结束前禁用，相关执行计划已标记为 superseded，不能从后台"
-                    "误重试；历史、执行文件和 JSON/HTML/JUnit 报告仍可查看。"
+                    "误重试；历史和 JSON/HTML/JUnit 报告仍可查看，内部执行产物仅供后端追踪。"
                 )
             ],
             "post_business_counts": post_counts,

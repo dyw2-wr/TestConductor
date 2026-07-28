@@ -104,7 +104,7 @@ def uploaded_file(request, path_ref: str):
         TestResourceProfile.objects.filter(**{field_name: value}).exists()
         for field_name in (
             "api_openapi_file",
-            "database_query_file",
+            "database_asset_file",
             "performance_profile_file",
         )
     )

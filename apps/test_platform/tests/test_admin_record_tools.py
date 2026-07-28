@@ -272,6 +272,106 @@ class AdminRecordToolsTests(TestCase):
         self.assertEqual(response.status_code, 302)
         self.assertEqual(queue_run.call_count, 2)
 
+    @patch("apps.test_platform.execution_service.queue_execution_plan_artifact")
+    @patch(
+        "apps.test_platform.admin.ExecutionPlanArtifactAdmin.approve_execution_plan"
+    )
+    def test_pending_detail_run_refreshes_approved_bundle_before_queue(
+        self,
+        approve_plan,
+        queue_run,
+    ):
+        source_plan = self.create_plan(
+            title="待审批直接运行来源",
+            status=models.TestPlanArtifact.Status.APPROVED,
+            marked=False,
+        )
+        execution_plan = self.create_execution_plan(source_plan)
+        execution_plan.status = models.ExecutionPlanArtifact.Status.REVIEW
+        execution_plan.approved_bundle = {}
+        execution_plan.compilation_result = {
+            "plan": {"flows": []},
+            "validation": {"passed": True},
+            "artifacts": [{"artifact": "ready"}],
+        }
+        execution_plan.save(
+            update_fields=(
+                "status",
+                "approved_bundle",
+                "compilation_result",
+                "updated_at",
+            )
+        )
+        fresh_bundle = {"plan": {"source": "fresh approval"}}
+
+        def approve_now(request, queryset):
+            queryset.update(
+                status=models.ExecutionPlanArtifact.Status.APPROVED,
+                approved_bundle=fresh_bundle,
+            )
+
+        approve_plan.side_effect = approve_now
+        queue_run.return_value = SimpleNamespace(run_id="fresh-detail-run")
+
+        response = self.client.post(
+            reverse(
+                "admin:test_platform_executionplanartifact_change",
+                args=[execution_plan.pk],
+            ),
+            {
+                "_approve_execution_plan": "运行",
+                "review_comments": "",
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        queued_artifact = queue_run.call_args.args[0]
+        self.assertEqual(queued_artifact.approved_bundle, fresh_bundle)
+
+    @patch("apps.test_platform.execution_service.queue_execution_plan_artifact")
+    @patch(
+        "apps.test_platform.admin.ExecutionPlanArtifactAdmin.approve_execution_plan"
+    )
+    def test_pending_batch_run_refreshes_approved_bundle_before_queue(
+        self,
+        approve_plan,
+        queue_run,
+    ):
+        source_plan = self.create_plan(
+            title="待审批批量运行来源",
+            status=models.TestPlanArtifact.Status.APPROVED,
+            marked=False,
+        )
+        execution_plan = self.create_execution_plan(source_plan)
+        execution_plan.status = models.ExecutionPlanArtifact.Status.REVIEW
+        execution_plan.approved_bundle = {}
+        execution_plan.save(
+            update_fields=("status", "approved_bundle", "updated_at")
+        )
+        fresh_bundle = {"plan": {"source": "fresh batch approval"}}
+
+        def approve_now(request, queryset):
+            queryset.update(
+                status=models.ExecutionPlanArtifact.Status.APPROVED,
+                approved_bundle=fresh_bundle,
+            )
+
+        approve_plan.side_effect = approve_now
+        queue_run.return_value = SimpleNamespace(run_id="fresh-batch-run")
+
+        response = self.client.post(
+            reverse("admin:test_platform_executionplanartifact_changelist"),
+            {
+                "action": "run_selected",
+                "_selected_action": [str(execution_plan.pk)],
+                "select_across": "0",
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        queued_artifact = queue_run.call_args.args[0]
+        self.assertEqual(queued_artifact.approved_bundle, fresh_bundle)
+
     def test_detail_commands_match_each_layer(self):
         source_plan = self.create_plan(
             title="详情按钮来源",

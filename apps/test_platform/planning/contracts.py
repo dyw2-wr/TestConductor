@@ -21,7 +21,7 @@ from apps.test_platform.intent.contracts import (
     DesignStatus,
     contains_secret_literal,
 )
-from apps.test_platform.database_sql import validate_read_only_sql
+from apps.test_platform.database_sql import validate_database_sql
 
 from .catalogs import LoadStage, PlanningCatalogSnapshot
 
@@ -88,13 +88,14 @@ class ExpectedResultSelection(StrictPlanModel):
 
 
 class DatabaseQueryDraftCandidate(StrictPlanModel):
-    """AI-authored read-only SQL proposed for execution-plan approval."""
+    """One AI-authored SQL statement proposed for execution-plan approval."""
 
     expected_result_id: str
     operation_id: str | None = None
     sql: str
+    execution_policy: Literal["read_only", "write"]
     parameters_refs: dict[str, str] = Field(default_factory=dict)
-    check_kind: Literal["row_count", "column", "exists"]
+    check_kind: Literal["row_count", "column", "exists", "affected_rows"]
     check_column: str | None = None
     operator: Literal[
         "equals",
@@ -114,8 +115,9 @@ class DatabaseQueryDraftCandidate(StrictPlanModel):
 
     @model_validator(mode="after")
     def validate_draft(self) -> "DatabaseQueryDraftCandidate":
-        validate_read_only_sql(
+        validate_database_sql(
             self.sql,
+            execution_policy=self.execution_policy,
             parameters_refs=self.parameters_refs,
         )
         if self.check_kind == "column":
@@ -213,6 +215,8 @@ class PlanStageCandidate(StrictPlanModel):
                 raise ValueError(
                     "AI SQL stage 不能混用 catalog operations/expected_results/data_bindings"
                 )
+        if self.executor_kind == ExecutorKind.DATABASE and not self.database_queries:
+            raise ValueError("database stage 必须生成完整 database_queries SQL")
         for label, values in (
             ("operations", [item.operation_id for item in self.operations]),
             (
@@ -464,8 +468,8 @@ class DatabaseOperationPlan(StrictPlanModel):
     source: ExecutionSource
     operation_ref: str
     action: str
-    operation_kind: Literal["query"] = "query"
-    execution_policy: Literal["read_only"] = "read_only"
+    operation_kind: Literal["statement", "query"] = "statement"
+    execution_policy: Literal["read_only", "write"] = "read_only"
     sql: str | None = None
     parameters_refs: dict[str, str] = Field(default_factory=dict)
     sql_origin: Literal["catalog", "knowledge_reused", "ai_generated"] = "catalog"
@@ -481,8 +485,9 @@ class DatabaseOperationPlan(StrictPlanModel):
         else:
             if self.sql is None:
                 raise ValueError("AI 数据库操作必须携带 SQL")
-            validate_read_only_sql(
+            validate_database_sql(
                 self.sql,
+                execution_policy=self.execution_policy,
                 parameters_refs=self.parameters_refs,
             )
         return self

@@ -145,7 +145,7 @@ def _resource_source_hash(profile) -> str:
     for name in (
         "ui_agent_asset_file",
         "api_openapi_file",
-        "database_query_file",
+        "database_asset_file",
         "performance_profile_file",
     ):
         field = getattr(profile, name, None)
@@ -265,7 +265,7 @@ def _resolve_api(profile):
 
 def _resolve_database(profile):
     document = _read_structured(
-        profile.database_query_file,
+        profile.database_asset_file,
         label="数据库访问策略",
     )
     if document.get("schema_version") != "database-access-policy.v1":
@@ -586,7 +586,7 @@ def _loose_resource_sources(profile) -> tuple[dict[str, str], dict[str, bool]]:
         ),
         (
             "database",
-            "database_query_file",
+            "database_asset_file",
             "database_asset_text",
             lambda value: value.get("schema_version") == "database-access-policy.v1",
         ),
@@ -671,12 +671,10 @@ def validate_non_ui_resource_files(profile) -> None:
         content["available_executors"].append("http_api")
         content["http_operations"].extend(operations)
         content["data_bindings"].extend(bindings)
-    if profile.database_query_file:
-        operations, bindings, _, database_schema = _resolve_database(profile)
+    if profile.database_asset_file:
+        _, _, _, database_schema = _resolve_database(profile)
         content["available_executors"].append("database")
-        content["database_operations"].extend(operations)
         content["database_schema"] = database_schema
-        content["data_bindings"].extend(bindings)
     if profile.performance_profile_file:
         profiles, _ = _resolve_performance(profile, api_targets)
         content["available_executors"].append("performance")
@@ -711,11 +709,9 @@ def validate_resource_source_inputs(profile) -> None:
         content["http_operations"].extend(operations)
         content["data_bindings"].extend(bindings)
     if strict["database"]:
-        operations, bindings, _, database_schema = _resolve_database(profile)
+        _, _, _, database_schema = _resolve_database(profile)
         content["available_executors"].append("database")
-        content["database_operations"].extend(operations)
         content["database_schema"] = database_schema
-        content["data_bindings"].extend(bindings)
     if strict["performance"]:
         profiles, _ = _resolve_performance(profile, api_targets)
         content["available_executors"].append("performance")
@@ -760,11 +756,9 @@ def resolve_test_resources(
         content["data_bindings"].extend(bindings)
         _merge_runtime(runtime, values)
     if strict_sources["database"]:
-        operations, bindings, values, database_schema = _resolve_database(profile)
+        _, _, values, database_schema = _resolve_database(profile)
         content["available_executors"].append("database")
-        content["database_operations"].extend(operations)
         content["database_schema"] = database_schema
-        content["data_bindings"].extend(bindings)
         _merge_runtime(runtime, values)
     if loose_sources:
         model_sources = dict(loose_sources)
