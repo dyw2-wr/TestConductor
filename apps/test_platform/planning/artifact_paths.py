@@ -8,6 +8,7 @@ from typing import Any
 
 EXECUTOR_ARTIFACT_CATEGORIES = {
     "procedure_playwright": "ui",
+    "stagehand_agent": "ui",
     "http_api": "api",
     "database": "database",
     "performance": "performance",

@@ -6,6 +6,9 @@
     <p>测试工作区</p>
     <h1>{{ title }}</h1>
     {% if page_description %}<span>{{ page_description }}</span>{% endif %}
+    {% if marked_records_url %}
+        <a class="button tb-marked-link" href="{{ marked_records_url }}">已标记{% if marked_records_count %}（{{ marked_records_count }}）{% endif %}</a>
+    {% endif %}
 </header>
 {% if generation_auto_refresh %}
 <span id="tb-generation-poll" data-interval-ms="8000" hidden></span>
@@ -15,7 +18,9 @@
 
 {% block result_list %}
     {% if cl.result_count %}
+        {% if action_form and actions_on_top %}{% admin_actions %}{% endif %}
         {% result_list cl %}
+        {% if action_form and actions_on_bottom %}{% admin_actions %}{% endif %}
     {% else %}
         <section class="tb-empty-state" aria-label="暂无记录">
             <span class="tb-empty-state__mark" aria-hidden="true"></span>

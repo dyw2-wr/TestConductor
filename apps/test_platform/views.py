@@ -172,6 +172,7 @@ def version(request):
                 "database",
                 "performance",
                 "tcp_port",
+                "stagehand_agent",
             ],
             "external_executors": ["procedure_playwright"],
             "deferred_executors": [],

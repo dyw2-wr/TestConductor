@@ -57,6 +57,7 @@ class PlanReviewDecision(str, Enum):
 
 class ExecutorKind(str, Enum):
     PROCEDURE_PLAYWRIGHT = "procedure_playwright"
+    STAGEHAND_AGENT = "stagehand_agent"
     HTTP_API = "http_api"
     DATABASE = "database"
     PERFORMANCE = "performance"
@@ -190,9 +191,18 @@ class PlanStageCandidate(StrictPlanModel):
     database_queries: list[DatabaseQueryDraftCandidate] = Field(default_factory=list)
     performance_stages: list[LoadStage] = Field(default_factory=list)
     data_bindings: list[DataBindingSelection] = Field(default_factory=list)
+    agent_start_url: str | None = None
 
     @model_validator(mode="after")
     def require_unique_ownership(self) -> "PlanStageCandidate":
+        if self.agent_start_url is not None:
+            from urllib.parse import urlsplit
+
+            if self.executor_kind != ExecutorKind.STAGEHAND_AGENT:
+                raise ValueError("agent_start_url 只能用于 stagehand_agent stage")
+            parsed = urlsplit(self.agent_start_url)
+            if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+                raise ValueError("agent_start_url 必须是绝对 HTTP(S) URL")
         if self.performance_stages and self.executor_kind != ExecutorKind.PERFORMANCE:
             raise ValueError("performance_stages 只能用于 performance stage")
         if self.executor_kind == ExecutorKind.PERFORMANCE and not self.performance_stages:
@@ -484,6 +494,31 @@ class ProcedureExecution(StrictPlanModel):
         return self
 
 
+class AgentUiPlanRow(StrictPlanModel):
+    row_id: str
+    source: ExecutionSource
+    operation_ref: str
+    action: str
+    assertions: list[BoundAssertion] = Field(default_factory=list)
+
+
+class AgentUiExecution(StrictPlanModel):
+    kind: Literal["stagehand_agent"] = "stagehand_agent"
+    capability_profile_ref: str
+    start_url: str
+    max_steps: int = Field(ge=1, le=200)
+    rows: list[AgentUiPlanRow] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_start_url(self) -> "AgentUiExecution":
+        from urllib.parse import urlsplit
+
+        parsed = urlsplit(self.start_url)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise ValueError("AgentUiExecution.start_url 必须是绝对 HTTP(S) URL")
+        return self
+
+
 class HttpRequestPlan(StrictPlanModel):
     request_id: str
     source: ExecutionSource
@@ -600,6 +635,7 @@ class PerformanceExecution(StrictPlanModel):
 
 PlanExecution = Annotated[
     ProcedureExecution
+    | AgentUiExecution
     | HttpExecution
     | DatabaseExecution
     | PortExecution
@@ -987,6 +1023,8 @@ def reject_secret_values(value: Any) -> None:
 
 
 __all__ = [
+    "AgentUiExecution",
+    "AgentUiPlanRow",
     "ApprovedTestPlanBundle",
     "BoundAssertion",
     "BoundData",

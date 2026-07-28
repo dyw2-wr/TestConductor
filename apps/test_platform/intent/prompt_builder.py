@@ -85,6 +85,7 @@ class DefaultDesignPromptBuilder:
             "不要编造。\n"
             "第一层不读取测试资源配置的 host、port、URL、OpenAPI、SQL 或 driver；这些执行资源"
             "由第二层确定性解析。因此不要因为缺少主机、端口、URL 或执行器细节提出 open_question，"
+            "但若用户在本次测试意图中明确给出 URL，必须原样保留在对应 UI 操作描述中，不能删除或改写。"
             "也不要把它们编造进业务意图。\n"
             "每个 expected_result 只表达一个可独立验证的结果，并用 1-based after_operation_index"
             "关联本场景 operations；不要把 UI 提示、API 响应和数据库状态合并为一句预期。\n"

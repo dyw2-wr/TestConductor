@@ -9,10 +9,24 @@ class Command(BaseCommand):
 
     def add_arguments(self, parser):
         parser.add_argument("--workflow-id", type=int, required=True)
+        parser.add_argument("--count", type=int, default=1)
+        parser.add_argument("--previous-artifact-id", type=int)
 
     def handle(self, *args, **options):
         try:
-            artifact = generate_design_artifact(options["workflow_id"])
+            count = int(options["count"])
+            if not 1 <= count <= 10:
+                raise CommandError("--count 必须在 1 到 10 之间")
+            artifacts = []
+            for index in range(count):
+                artifacts.append(
+                    generate_design_artifact(
+                        options["workflow_id"],
+                        previous_artifact_id=(
+                            options["previous_artifact_id"] if index == 0 else None
+                        ),
+                    )
+                )
         except Exception as exc:
             from apps.test_platform.models import TestWorkflow
 
@@ -29,4 +43,6 @@ class Command(BaseCommand):
                 },
             )
             raise CommandError(str(exc)) from exc
-        self.stdout.write(self.style.SUCCESS(artifact.artifact_id))
+        self.stdout.write(
+            self.style.SUCCESS(",".join(artifact.artifact_id for artifact in artifacts))
+        )

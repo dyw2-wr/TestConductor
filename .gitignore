@@ -10,6 +10,7 @@ milvus_data/
 volumes/
 .venv/
 venv/
+node_modules/
 .idea/
 .agents/
 .codex/

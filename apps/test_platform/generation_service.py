@@ -146,16 +146,20 @@ def _read_workflow_files(obj: TestWorkflow) -> list[InputFile]:
     return files
 
 
-def generate_design_artifact(workflow_id: int) -> TestPlanArtifact:
+def generate_design_artifact(
+    workflow_id: int,
+    *,
+    previous_artifact_id: int | None = None,
+) -> TestPlanArtifact:
     obj = TestWorkflow.objects.select_related("resource_profile").get(pk=workflow_id)
     _set_workflow_progress(workflow_id, "loading_input", "正在读取需求和测试资源", 10)
-    previous_artifact = obj.test_plan_artifacts.order_by("-version", "-id").first()
-    if previous_artifact and previous_artifact.status not in {
-        TestPlanArtifact.Status.CHANGES,
-        TestPlanArtifact.Status.BLOCKED,
-        TestPlanArtifact.Status.ERROR,
-    }:
-        raise ValidationError("已有测试计划产物；请先完成审批或退回修改")
+    previous_artifact = None
+    if previous_artifact_id is not None:
+        previous_artifact = obj.test_plan_artifacts.filter(
+            pk=previous_artifact_id
+        ).first()
+        if previous_artifact is None:
+            raise ValidationError("重新生成来源测试计划不属于当前测试意图")
     if obj.resource_profile is None or not obj.resource_profile.enabled:
         raise ValidationError("请先选择一个已启用的测试资源配置")
 
@@ -252,11 +256,16 @@ def generate_design_artifact(workflow_id: int) -> TestPlanArtifact:
     return artifact
 
 
-def queue_design_generation(workflow: TestWorkflow) -> None:
-    allowed_statuses = {
-        TestWorkflow.Status.DRAFT,
-        TestWorkflow.Status.DESIGN_CHANGES,
-        TestWorkflow.Status.ERROR,
+def queue_design_generation(
+    workflow: TestWorkflow,
+    *,
+    count: int = 1,
+    previous_artifact_id: int | None = None,
+) -> None:
+    if not 1 <= int(count) <= 10:
+        raise ValidationError("一次最多生成 10 个测试计划")
+    allowed_statuses = set(TestWorkflow.Status.values) - {
+        TestWorkflow.Status.DESIGN_GENERATING,
     }
     # A conditional UPDATE is an atomic claim even when two requests hold stale
     # copies of the same workflow.  Saving the passed instance allowed both
@@ -282,7 +291,11 @@ def queue_design_generation(workflow: TestWorkflow) -> None:
         "generate_test_design",
         "--workflow-id",
         str(workflow.pk),
+        "--count",
+        str(int(count)),
     ]
+    if previous_artifact_id is not None:
+        command.extend(["--previous-artifact-id", str(previous_artifact_id)])
     try:
         _spawn(command, _job_log_root("design"), workflow.workflow_id)
     except Exception as exc:
@@ -326,14 +339,11 @@ def _claim_execution_placeholder(
     if test_plan.status != TestPlanArtifact.Status.APPROVED:
         raise ValidationError("只有已审批测试计划可以生成执行计划")
     from .input_contracts import validate_runtime_input
-    from .intent.contracts import contains_secret_value
 
     frozen_input = validate_runtime_input(execution_input).model_dump(
         mode="json",
         exclude_none=True,
     )
-    if contains_secret_value(frozen_input):
-        raise ValidationError("执行计划输入不能包含密码、token、连接串等秘密值")
     try:
         with transaction.atomic():
             test_plan = TestPlanArtifact.objects.select_for_update().get(pk=test_plan.pk)

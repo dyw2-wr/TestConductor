@@ -1,6 +1,9 @@
 """第二层：ApprovedTestDesignBundle + catalog -> approved TestPlan artifacts。"""
 
 from .catalogs import (
+    AgentUiCapabilityProfile,
+    AgentUiObservable,
+    AgentUiOperation,
     ProcedureCapabilityProfile,
     ProcedureObservable,
     ProcedureOperation,
@@ -22,6 +25,8 @@ from .catalogs import (
 )
 from .compiler import PlanCompilationResult, TestPlanCompiler
 from .contracts import (
+    AgentUiExecution,
+    AgentUiPlanRow,
     ApprovedTestPlanBundle,
     CleanupDataBinding,
     CleanupDataBindingSelection,
@@ -52,6 +57,11 @@ from .contracts import (
 from .planner import DefaultPlanPromptBuilder, PlanDraftGenerator
 
 __all__ = [
+    "AgentUiCapabilityProfile",
+    "AgentUiExecution",
+    "AgentUiObservable",
+    "AgentUiOperation",
+    "AgentUiPlanRow",
     "ApprovedTestPlanBundle",
     "ProcedureCapabilityProfile",
     "ProcedureObservable",

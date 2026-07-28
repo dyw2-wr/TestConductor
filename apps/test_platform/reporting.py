@@ -351,7 +351,14 @@ class TestReportGenerator:
                                 _field(stage_result, "metadata", {}) or {}
                             ).items()
                             if key
-                            in {"coordinator_run_id", "stage_order", "not_executed"}
+                            in {
+                                "coordinator_run_id",
+                                "stage_order",
+                                "not_executed",
+                                "final_url",
+                                "message",
+                                "planned_rows",
+                            }
                         },
                         "external_action_started": bool(
                             _field(stage_result, "external_action_started", False)
@@ -525,6 +532,11 @@ class TestReportGenerator:
             "cleanup_goal_id",
             "handler_kind",
             "parameter_slots",
+            "type",
+            "action",
+            "pageUrl",
+            "taskCompleted",
+            "timestamp",
         }
         if isinstance(details, Mapping):
             for key in allowed_detail_keys:
@@ -754,6 +766,7 @@ class TestReportGenerator:
                 evidence = self._render_evidence(stage["evidence"], evidence_prefix)
                 artifacts = self._render_artifacts(stage["artifacts"])
                 errors = "<br>".join(escape(str(item)) for item in stage["errors"]) or "-"
+                agent_summary = self._render_agent_summary(stage)
                 display_steps = []
                 for value in stage["steps"]:
                     display_value = dict(value)
@@ -770,7 +783,7 @@ class TestReportGenerator:
                     f"<td>{self._format_duration(stage.get('duration_ms'))}</td>"
                     f"<td>{evidence}</td>"
                     f"<td>{artifacts}</td>"
-                    f"<td>{errors}<details><summary>步骤详情</summary><pre>{details}</pre></details></td>"
+                    f"<td>{errors}{agent_summary}<details><summary>实际步骤</summary><pre>{details}</pre></details></td>"
                     "</tr>"
                 )
             cleanup = flow.get("cleanup")
@@ -861,6 +874,44 @@ class TestReportGenerator:
 </body>
 </html>
 """
+
+    @staticmethod
+    def _render_agent_summary(stage: Mapping[str, Any]) -> str:
+        if stage.get("executor_kind") != "stagehand_agent":
+            return ""
+        metadata = stage.get("metadata")
+        if not isinstance(metadata, Mapping):
+            return ""
+        items: list[str] = []
+        planned = metadata.get("planned_rows")
+        if isinstance(planned, list):
+            for row in planned:
+                if not isinstance(row, Mapping):
+                    continue
+                checks = row.get("checks")
+                check_text = (
+                    "；".join(
+                        escape(str(value))
+                        for value in checks
+                        if str(value).strip()
+                    )
+                    if isinstance(checks, list)
+                    else ""
+                )
+                items.append(
+                    "<li><strong>Action:</strong> "
+                    f"{escape(str(row.get('action') or '-'))}<br>"
+                    f"<strong>Check:</strong> {check_text or '-'}</li>"
+                )
+        final_url = escape(str(metadata.get("final_url") or "-"))
+        message = escape(str(metadata.get("message") or "-"))
+        planned_html = "".join(items) or "<li>-</li>"
+        return (
+            f"<p><strong>最终页面:</strong> {final_url}<br>"
+            f"<strong>执行消息:</strong> {message}</p>"
+            "<details open><summary>计划 Action / Check</summary>"
+            f"<ol>{planned_html}</ol></details>"
+        )
 
     @staticmethod
     def _status_badge(status: Any) -> str:

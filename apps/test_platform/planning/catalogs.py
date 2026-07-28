@@ -24,6 +24,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 CatalogExecutorKind: TypeAlias = Literal[
     "procedure_playwright",
+    "stagehand_agent",
     "http_api",
     "database",
     "performance",
@@ -483,6 +484,55 @@ class ProcedureCapabilityProfile(StrictCatalogModel):
         return self
 
 
+class AgentUiOperation(StrictCatalogModel):
+    operation_ref: str
+    description: str
+    state_effect: CatalogStateEffect | Literal["unknown"] = "unknown"
+
+    @model_validator(mode="after")
+    def validate_operation(self) -> "AgentUiOperation":
+        _require_ref(self.operation_ref, "AgentUiOperation.operation_ref")
+        _reject_unsafe_text(self.description, "AgentUiOperation.description")
+        return self
+
+
+class AgentUiObservable(StrictCatalogModel):
+    observable_ref: str
+    description: str
+
+    @model_validator(mode="after")
+    def validate_observable(self) -> "AgentUiObservable":
+        _require_ref(self.observable_ref, "AgentUiObservable.observable_ref")
+        _reject_unsafe_text(self.description, "AgentUiObservable.description")
+        return self
+
+
+class AgentUiCapabilityProfile(StrictCatalogModel):
+    profile_ref: str
+    start_url: str
+    max_steps: int = Field(ge=1, le=200)
+    operations: list[AgentUiOperation] = Field(min_length=1)
+    observables: list[AgentUiObservable] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_profile(self) -> "AgentUiCapabilityProfile":
+        from urllib.parse import urlsplit
+
+        _require_ref(self.profile_ref, "AgentUiCapabilityProfile.profile_ref")
+        parsed = urlsplit(self.start_url)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise ValueError("AgentUiCapabilityProfile.start_url 必须是绝对 HTTP(S) URL")
+        _require_unique(
+            [item.operation_ref for item in self.operations],
+            "AgentUiCapabilityProfile.operations",
+        )
+        _require_unique(
+            [item.observable_ref for item in self.observables],
+            "AgentUiCapabilityProfile.observables",
+        )
+        return self
+
+
 class DataBinding(StrictCatalogModel):
     binding_ref: str
     description: str
@@ -546,6 +596,9 @@ CatalogResource: TypeAlias = (
     | ProcedureCapabilityProfile
     | ProcedureOperation
     | ProcedureObservable
+    | AgentUiCapabilityProfile
+    | AgentUiOperation
+    | AgentUiObservable
     | DataBinding
     | CleanupAction
 )
@@ -563,6 +616,7 @@ class _PlanningCatalogContent(StrictCatalogModel):
     tcp_port_probes: list[TcpPortProbe] = Field(default_factory=list)
     performance_profiles: list[PerformanceProfile] = Field(default_factory=list)
     procedure_profiles: list[ProcedureCapabilityProfile] = Field(default_factory=list)
+    agent_ui_profiles: list[AgentUiCapabilityProfile] = Field(default_factory=list)
     data_bindings: list[DataBinding] = Field(default_factory=list)
     cleanup_actions: list[CleanupAction] = Field(default_factory=list)
 
@@ -592,6 +646,8 @@ class _PlanningCatalogContent(StrictCatalogModel):
             raise ValueError("performance is available but performance_profiles is empty")
         if "procedure_playwright" in available and not self.procedure_profiles:
             raise ValueError("procedure_playwright is available but procedure_profiles is empty")
+        if "stagehand_agent" in available and not self.agent_ui_profiles:
+            raise ValueError("stagehand_agent is available but agent_ui_profiles is empty")
 
         definitions: list[tuple[str, str]] = []
         definitions.extend((item.operation_ref, "http operation") for item in self.http_operations)
@@ -599,6 +655,7 @@ class _PlanningCatalogContent(StrictCatalogModel):
         definitions.extend((item.probe_ref, "tcp port probe") for item in self.tcp_port_probes)
         definitions.extend((item.profile_ref, "performance profile") for item in self.performance_profiles)
         definitions.extend((item.profile_ref, "procedure profile") for item in self.procedure_profiles)
+        definitions.extend((item.profile_ref, "agent UI profile") for item in self.agent_ui_profiles)
         definitions.extend((item.binding_ref, "data binding") for item in self.data_bindings)
         definitions.extend((item.action_ref, "cleanup action") for item in self.cleanup_actions)
         for operation in self.http_operations:
@@ -612,6 +669,9 @@ class _PlanningCatalogContent(StrictCatalogModel):
         for profile in self.procedure_profiles:
             definitions.extend((item.operation_ref, "procedure operation") for item in profile.operations)
             definitions.extend((item.observable_ref, "procedure observable") for item in profile.observables)
+        for profile in self.agent_ui_profiles:
+            definitions.extend((item.operation_ref, "agent UI operation") for item in profile.operations)
+            definitions.extend((item.observable_ref, "agent UI observable") for item in profile.observables)
 
         seen: dict[str, str] = {}
         for ref, domain in definitions:
@@ -803,6 +863,20 @@ class PlanningCatalogSnapshot(_PlanningCatalogContent):
             None,
         )
 
+    def get_agent_ui_profile(self, ref: str) -> AgentUiCapabilityProfile | None:
+        return next((item for item in self.agent_ui_profiles if item.profile_ref == ref), None)
+
+    def get_agent_ui_operation(self, ref: str) -> AgentUiOperation | None:
+        return next(
+            (
+                item
+                for profile in self.agent_ui_profiles
+                for item in profile.operations
+                if item.operation_ref == ref
+            ),
+            None,
+        )
+
     def get_data_binding(self, ref: str) -> DataBinding | None:
         return next((item for item in self.data_bindings if item.binding_ref == ref), None)
 
@@ -812,15 +886,16 @@ class PlanningCatalogSnapshot(_PlanningCatalogContent):
     def get_observable(
         self,
         ref: str,
-    ) -> HttpObservable | DatabaseObservable | PortObservable | PerformanceObservable | ProcedureObservable | None:
+    ) -> HttpObservable | DatabaseObservable | PortObservable | PerformanceObservable | ProcedureObservable | AgentUiObservable | None:
         values: list[
-            HttpObservable | DatabaseObservable | PortObservable | PerformanceObservable | ProcedureObservable
+            HttpObservable | DatabaseObservable | PortObservable | PerformanceObservable | ProcedureObservable | AgentUiObservable
         ] = []
         values.extend(item for operation in self.http_operations for item in operation.observables)
         values.extend(item for operation in self.database_operations for item in operation.observables)
         values.extend(item for probe in self.tcp_port_probes for item in probe.observables)
         values.extend(item for profile in self.performance_profiles for item in profile.observables)
         values.extend(item for profile in self.procedure_profiles for item in profile.observables)
+        values.extend(item for profile in self.agent_ui_profiles for item in profile.observables)
         return next((item for item in values if item.observable_ref == ref), None)
 
     def get_ref(self, ref: str) -> CatalogResource | None:
@@ -830,6 +905,7 @@ class PlanningCatalogSnapshot(_PlanningCatalogContent):
             *self.tcp_port_probes,
             *self.performance_profiles,
             *self.procedure_profiles,
+            *self.agent_ui_profiles,
             *self.data_bindings,
             *self.cleanup_actions,
         ]
@@ -884,6 +960,9 @@ def compute_catalog_content_hash(value: PlanningCatalogSnapshot | Mapping[str, A
 
 
 __all__ = [
+    "AgentUiCapabilityProfile",
+    "AgentUiObservable",
+    "AgentUiOperation",
     "ProcedureCapabilityProfile",
     "ProcedureObservable",
     "ProcedureOperation",

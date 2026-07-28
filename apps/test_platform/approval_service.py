@@ -49,41 +49,6 @@ def persist_test_plan_approval(
     return artifact
 
 
-def persist_test_plan_changes(
-    artifact_id: int,
-    *,
-    expected_status: str,
-    review_payload: dict[str, Any],
-) -> TestPlanArtifact:
-    """Return one still-reviewable test plan without overwriting a winner."""
-
-    if expected_status not in {
-        TestPlanArtifact.Status.REVIEW,
-        TestPlanArtifact.Status.BLOCKED,
-    }:
-        raise ValidationError("只有待审批或已阻塞测试计划可以退回")
-    now = timezone.now()
-    with transaction.atomic():
-        claimed = TestPlanArtifact.objects.filter(
-            pk=artifact_id,
-            status=expected_status,
-        ).update(
-            review_payload=review_payload,
-            status=TestPlanArtifact.Status.CHANGES,
-            last_error="",
-            updated_at=now,
-        )
-        if claimed != 1:
-            raise ValidationError("该测试计划已被其他请求处理，请刷新页面")
-        artifact = TestPlanArtifact.objects.get(pk=artifact_id)
-        if artifact.source_intent_id:
-            TestWorkflow.objects.filter(pk=artifact.source_intent_id).update(
-                status=TestWorkflow.Status.DESIGN_CHANGES,
-                updated_at=now,
-            )
-    return artifact
-
-
 def persist_execution_plan_review(
     artifact_id: int,
     *,
@@ -109,20 +74,11 @@ def persist_execution_plan_review(
             current = ExecutionPlanArtifact.objects.only(
                 "source_test_plan_id"
             ).get(pk=artifact_id)
-            # This row is the cross-version approval mutex on databases that
-            # implement SELECT FOR UPDATE.  The conditional unique constraint
-            # remains the final guard on every supported database.
+            # Lock the source test plan so simultaneous review requests cannot
+            # overwrite the same execution-plan snapshot.
             TestPlanArtifact.objects.select_for_update().get(
                 pk=current.source_test_plan_id
             )
-            if target_status == ExecutionPlanArtifact.Status.APPROVED:
-                ExecutionPlanArtifact.objects.filter(
-                    source_test_plan_id=current.source_test_plan_id,
-                    status=ExecutionPlanArtifact.Status.APPROVED,
-                ).exclude(pk=artifact_id).update(
-                    status=ExecutionPlanArtifact.Status.SUPERSEDED,
-                    updated_at=now,
-                )
             values: dict[str, Any] = {
                 "review_payload": review_payload,
                 "status": target_status,
@@ -138,12 +94,11 @@ def persist_execution_plan_review(
             if claimed != 1:
                 raise ValidationError("该执行计划已被其他请求处理，请刷新页面")
     except IntegrityError as exc:
-        raise ValidationError("已有其他执行计划版本被审批，请刷新页面") from exc
+        raise ValidationError("执行计划审批保存失败，请刷新页面后重试") from exc
     return ExecutionPlanArtifact.objects.get(pk=artifact_id)
 
 
 __all__ = [
     "persist_execution_plan_review",
     "persist_test_plan_approval",
-    "persist_test_plan_changes",
 ]

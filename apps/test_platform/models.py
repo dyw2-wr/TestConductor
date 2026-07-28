@@ -159,6 +159,17 @@ class TestResourceProfile(models.Model):
         verbose_name="沉淀资产库",
         help_text="上传一个网站对应的 SQLite UI 函数资产库，例如 127.0.0.1.sqlite。",
     )
+    ui_agent_asset_file = models.FileField(
+        upload_to="test_platform/resources/ui-agent/%Y/%m/",
+        blank=True,
+        verbose_name="网页 Agent 资料文件（可选）",
+        help_text="上传包含 URL、功能和最大步数的表格或常见文本文件。",
+    )
+    ui_agent_asset_text = models.TextField(
+        blank=True,
+        verbose_name="网页 Agent 资料说明（可选）",
+        help_text="直接填写网站 URL、大致功能和最大步数；与资料文件二选一。",
+    )
     api_openapi_file = models.FileField(
         upload_to="test_platform/resources/openapi/%Y/%m/",
         blank=True,
@@ -231,7 +242,7 @@ class TestResourceProfile(models.Model):
 
     def configured_channels(self) -> set[str]:
         channels: set[str] = set()
-        if self.ui_procedure_database:
+        if self.ui_procedure_database or self.ui_agent_asset_file or self.ui_agent_asset_text.strip():
             channels.add("ui")
         if (self.api_openapi_file or self.api_asset_text.strip()) and self.api_base_url:
             channels.add("api")
@@ -248,6 +259,16 @@ class TestResourceProfile(models.Model):
     def clean(self) -> None:
         super().clean()
         errors: dict[str, str] = {}
+        ui_sources = sum(
+            bool(value)
+            for value in (
+                self.ui_procedure_database,
+                self.ui_agent_asset_file,
+                self.ui_agent_asset_text.strip(),
+            )
+        )
+        if ui_sources > 1:
+            errors["ui_procedure_database"] = "UI 函数资产库和网页 Agent 资料只能选择一种"
         has_api_source = bool(self.api_openapi_file or self.api_asset_text.strip())
         if has_api_source != bool(self.api_base_url):
             errors["api_openapi_file"] = "接口资料和 API 基础地址必须同时配置"
@@ -342,6 +363,7 @@ class TestWorkflow(models.Model):
         verbose_name="生成进度",
     )
     last_error = models.TextField(blank=True, editable=False, verbose_name="最近错误")
+    is_marked = models.BooleanField(default=False, db_index=True, verbose_name="已标记")
     created_at = models.DateTimeField(auto_now_add=True, verbose_name="创建时间")
     updated_at = models.DateTimeField(auto_now=True, verbose_name="更新时间")
 
@@ -389,7 +411,7 @@ class TestPlanArtifact(models.Model):
         null=True,
         blank=True,
         editable=False,
-        on_delete=models.PROTECT,
+        on_delete=models.CASCADE,
         related_name="test_plan_artifacts",
         verbose_name="来源测试意图",
     )
@@ -427,6 +449,7 @@ class TestPlanArtifact(models.Model):
     )
     review_comments = models.TextField(blank=True, verbose_name="审批意见")
     last_error = models.TextField(blank=True, editable=False, verbose_name="最近错误")
+    is_marked = models.BooleanField(default=False, db_index=True, verbose_name="已标记")
     created_at = models.DateTimeField(auto_now_add=True, verbose_name="创建时间")
     updated_at = models.DateTimeField(auto_now=True, verbose_name="更新时间")
 
@@ -438,8 +461,8 @@ class TestPlanArtifact(models.Model):
                 name="tp_unique_design_revision",
             )
         ]
-        verbose_name = "审批测试计划"
-        verbose_name_plural = "审批测试计划"
+        verbose_name = "测试计划"
+        verbose_name_plural = "测试计划"
 
     def __str__(self) -> str:
         return self.title or "未命名测试计划"
@@ -466,7 +489,7 @@ class ExecutionPlanArtifact(models.Model):
     )
     source_test_plan = models.ForeignKey(
         TestPlanArtifact,
-        on_delete=models.PROTECT,
+        on_delete=models.CASCADE,
         related_name="execution_plans",
         verbose_name="来源测试计划",
     )
@@ -517,6 +540,7 @@ class ExecutionPlanArtifact(models.Model):
     )
     review_comments = models.TextField(blank=True, verbose_name="审批意见")
     last_error = models.TextField(blank=True, editable=False, verbose_name="最近错误")
+    is_marked = models.BooleanField(default=False, db_index=True, verbose_name="已标记")
     created_at = models.DateTimeField(auto_now_add=True, verbose_name="创建时间")
     updated_at = models.DateTimeField(auto_now=True, verbose_name="更新时间")
 
@@ -532,14 +556,9 @@ class ExecutionPlanArtifact(models.Model):
                 condition=models.Q(status="generating"),
                 name="tp_one_generating_plan_per_source",
             ),
-            models.UniqueConstraint(
-                fields=["source_test_plan"],
-                condition=models.Q(status="approved"),
-                name="tp_one_approved_plan_per_source",
-            ),
         ]
-        verbose_name = "审批执行计划"
-        verbose_name_plural = "审批执行计划"
+        verbose_name = "执行计划"
+        verbose_name_plural = "执行计划"
 
     def __str__(self) -> str:
         return self.title or "未命名执行计划"
@@ -600,7 +619,7 @@ class TestExecutionRun(models.Model):
         null=True,
         blank=True,
         editable=False,
-        on_delete=models.PROTECT,
+        on_delete=models.CASCADE,
         related_name="runs",
         verbose_name="执行计划产物",
     )
@@ -615,6 +634,7 @@ class TestExecutionRun(models.Model):
     report_content_hash = models.CharField(max_length=71, blank=True)
     result_summary = models.JSONField(default=dict, blank=True)
     errors = models.JSONField(default=list, blank=True)
+    is_marked = models.BooleanField(default=False, db_index=True, verbose_name="已标记")
 
     created_at = models.DateTimeField(auto_now_add=True, verbose_name="创建时间")
     updated_at = models.DateTimeField(auto_now=True, verbose_name="更新时间")

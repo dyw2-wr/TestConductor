@@ -4,11 +4,13 @@ UI Procedure 编译器通过兼容名称按需加载，避免默认导入 pandas
 """
 
 from .database import DatabaseCompiler
+from .agent_ui import AgentUiCompiler
 from .http import HttpApiCompiler
 from .performance import PerformanceCompiler
 from .port import TcpPortCompiler
 
 __all__ = [
+    "AgentUiCompiler",
     "DatabaseCompiler",
     "HttpApiCompiler",
     "PerformanceCompiler",

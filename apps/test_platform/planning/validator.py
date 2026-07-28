@@ -10,6 +10,7 @@ from apps.test_platform.database_sql import validate_read_only_sql
 
 from .catalogs import PlanningCatalogSnapshot
 from .contracts import (
+    AgentUiExecution,
     ProcedureExecution,
     DatabaseExecution,
     ExecutorKind,
@@ -31,6 +32,7 @@ from .contracts import (
 
 EXECUTOR_CHANNEL = {
     ExecutorKind.PROCEDURE_PLAYWRIGHT: "ui",
+    ExecutorKind.STAGEHAND_AGENT: "ui",
     ExecutorKind.HTTP_API: "api",
     ExecutorKind.DATABASE: "database",
     ExecutorKind.PERFORMANCE: "performance",
@@ -443,7 +445,7 @@ class TestPlanValidator:
         if "unknown" in catalog_effects:
             add(
                 "UI_MODULE_STATE_EFFECT_UNDECLARED",
-                "Procedure Procedure 未声明业务状态影响，需由计划审核人核对第一层状态影响与清理目标",
+                "UI 资产未声明业务状态影响，需由计划审核人核对第一层状态影响与清理目标",
                 f"{path}.stages",
                 blocking=False,
             )
@@ -457,6 +459,8 @@ class TestPlanValidator:
 
     @staticmethod
     def _execution_steps(execution):
+        if isinstance(execution, AgentUiExecution):
+            return execution.rows
         if isinstance(execution, ProcedureExecution):
             return execution.rows
         if isinstance(execution, HttpExecution):
@@ -904,6 +908,57 @@ class TestPlanValidator:
                 f"{path}.execution",
                 add,
             )
+        elif isinstance(execution, AgentUiExecution):
+            profile = catalog.get_agent_ui_profile(execution.capability_profile_ref)
+            if profile is None or profile.max_steps != execution.max_steps:
+                add(
+                    "AGENT_UI_PROFILE_MISMATCH",
+                    "网页 Agent 能力配置不存在或最大步数被修改",
+                    f"{path}.execution",
+                )
+            allowed_operations = {
+                item.operation_ref: item
+                for item in (profile.operations if profile is not None else [])
+            }
+            allowed_observables = {
+                item.observable_ref: item
+                for item in (profile.observables if profile is not None else [])
+            }
+            for index, row in enumerate(execution.rows):
+                row_path = f"{path}.execution.rows[{index}]"
+                operation = allowed_operations.get(row.operation_ref)
+                if operation is None:
+                    add(
+                        "AGENT_UI_OPERATION_MISMATCH",
+                        "网页 Agent 操作不属于所选资产能力",
+                        row_path,
+                    )
+                else:
+                    catalog_effects.append(operation.state_effect)
+                self._validate_source_action(
+                    row.source,
+                    row.action,
+                    operation,
+                    operations,
+                    required_states,
+                    row_path,
+                    add,
+                )
+                for assertion in row.assertions:
+                    if assertion.observable_ref not in allowed_observables:
+                        add(
+                            "AGENT_UI_OBSERVABLE_MISMATCH",
+                            "网页 Agent 检查不属于所选资产能力",
+                            f"{row_path}.assertions",
+                        )
+                self._validate_assertions(
+                    row.assertions,
+                    expectations,
+                    profile,
+                    row_path,
+                    add,
+                    row.source,
+                )
         elif isinstance(execution, ProcedureExecution):
             profile = catalog.get_procedure_profile(execution.capability_profile_ref)
             if profile is None or (

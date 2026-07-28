@@ -8,7 +8,6 @@ from django import forms
 from django.conf import settings
 from django.contrib import admin, messages
 from django.core.exceptions import PermissionDenied, ValidationError
-from django.db.models import Q
 from django.http import FileResponse, Http404, HttpResponse, HttpResponseRedirect
 from django.template.response import TemplateResponse
 from django.urls import path, reverse
@@ -69,12 +68,13 @@ TECHNIQUE_LABELS = {
 }
 EXECUTOR_CATEGORY = {
     "procedure_playwright": "ui",
+    "stagehand_agent": "ui",
     "http_api": "api",
     "database": "database",
     "performance": "performance",
     "tcp_port": "port",
 }
-UI_EXECUTOR_KINDS = frozenset({"procedure_playwright"})
+UI_EXECUTOR_KINDS = frozenset({"procedure_playwright", "stagehand_agent"})
 
 
 def _approved_knowledge_catalog():
@@ -275,7 +275,7 @@ class AuditPayloadAdminMixin:
 class SingleRecordActionAdmin:
     """Keep workflow commands on one record instead of the bulk-action menu."""
 
-    actions = None
+    actions = ("mark_selected", "unmark_selected", "delete_selected")
     change_form_template = "admin/test_platform/change_form.html"
     change_list_template = "admin/test_platform/change_list_base.html"
     page_title = None
@@ -309,6 +309,44 @@ class SingleRecordActionAdmin:
     def get_record_commands(self, request, obj):
         return []
 
+    def _all_record_commands(self, request, obj):
+        commands = list(self.get_record_commands(request, obj))
+        if obj is not None and hasattr(obj, "is_marked"):
+            commands.insert(
+                0,
+                {
+                    "name": "_toggle_mark",
+                    "label": "取消标记" if obj.is_marked else "标记为重要",
+                    "handler": "run_toggle_mark",
+                    "kind": "secondary",
+                },
+            )
+        return commands
+
+    @admin.display(boolean=True, description="标记", ordering="is_marked")
+    def marked_status(self, obj):
+        return obj.is_marked
+
+    @admin.action(description="标记为重要")
+    def mark_selected(self, request, queryset):
+        count = queryset.update(is_marked=True)
+        self.message_user(request, f"已标记 {count} 条记录。", messages.SUCCESS)
+
+    @admin.action(description="取消标记")
+    def unmark_selected(self, request, queryset):
+        count = queryset.update(is_marked=False)
+        self.message_user(request, f"已取消 {count} 条标记。", messages.SUCCESS)
+
+    def run_toggle_mark(self, request, obj):
+        obj.is_marked = not obj.is_marked
+        obj.save(update_fields=("is_marked", "updated_at"))
+        self.message_user(
+            request,
+            "已标记为重要。" if obj.is_marked else "已取消标记。",
+            messages.SUCCESS,
+        )
+        return HttpResponseRedirect(request.path)
+
     def changelist_view(self, request, extra_context=None):
         context = {
             "title": self.page_title or self.model._meta.verbose_name_plural,
@@ -320,6 +358,16 @@ class SingleRecordActionAdmin:
                 .exists()
             ),
         }
+        if any(field.name == "is_marked" for field in self.model._meta.fields):
+            context["marked_records_url"] = (
+                reverse(
+                    f"admin:{self.model._meta.app_label}_{self.model._meta.model_name}_changelist"
+                )
+                + "?marked=yes"
+            )
+            context["marked_records_count"] = self.model._default_manager.filter(
+                is_marked=True
+            ).count()
         context.update(extra_context or {})
         return super().changelist_view(request, context)
 
@@ -329,7 +377,7 @@ class SingleRecordActionAdmin:
     def changeform_view(self, request, object_id=None, form_url="", extra_context=None):
         obj = self.get_object(request, object_id) if object_id else None
         context = {
-            "record_commands": self.get_record_commands(request, obj),
+            "record_commands": self._all_record_commands(request, obj),
             "record_show_save": self.show_record_save(request, obj),
             "record_show_delete": bool(obj and self.has_delete_permission(request, obj)),
             "display_record_title": (
@@ -347,10 +395,52 @@ class SingleRecordActionAdmin:
         return super().changeform_view(request, object_id, form_url, context)
 
     def response_change(self, request, obj):
-        for command in self.get_record_commands(request, obj):
+        for command in self._all_record_commands(request, obj):
             if command["name"] in request.POST:
                 return getattr(self, command["handler"])(request, obj)
         return super().response_change(request, obj)
+
+
+class MarkedRecordFilter(admin.SimpleListFilter):
+    title = "标记状态"
+    parameter_name = "marked"
+
+    def lookups(self, request, model_admin):
+        return (("yes", "已标记"),)
+
+    def queryset(self, request, queryset):
+        if self.value() == "yes":
+            return queryset.filter(is_marked=True)
+        return queryset
+
+
+class ExecutionPlanStateFilter(admin.SimpleListFilter):
+    title = "运行状态"
+    parameter_name = "execution_state"
+
+    def lookups(self, request, model_admin):
+        return (
+            ("waiting", "等待运行"),
+            ("generating", "生成中"),
+            ("needs_regeneration", "需重新生成"),
+        )
+
+    def queryset(self, request, queryset):
+        states = {
+            "waiting": (
+                ExecutionPlanArtifact.Status.REVIEW,
+                ExecutionPlanArtifact.Status.APPROVED,
+            ),
+            "generating": (ExecutionPlanArtifact.Status.GENERATING,),
+            "needs_regeneration": (
+                ExecutionPlanArtifact.Status.BLOCKED,
+                ExecutionPlanArtifact.Status.CHANGES,
+                ExecutionPlanArtifact.Status.ERROR,
+                ExecutionPlanArtifact.Status.SUPERSEDED,
+            ),
+        }
+        selected = states.get(self.value())
+        return queryset.filter(status__in=selected) if selected else queryset
 
 
 class ApprovalStateTabsMixin:
@@ -370,6 +460,12 @@ class ApprovalStateTabsMixin:
         return obj.title
 
     def _approval_state(self, request):
+        if (
+            request is not None
+            and request.GET.get("marked") == "yes"
+            and self.approval_state_param not in request.GET
+        ):
+            return None
         value = (
             request.GET.get(self.approval_state_param)
             if request is not None
@@ -386,9 +482,10 @@ class ApprovalStateTabsMixin:
         queryset = super().get_queryset(request)
         if self._is_change_view(request):
             return queryset
-        return queryset.filter(
-            status__in=self.approval_state_statuses[self._approval_state(request)]
-        )
+        selected = self._approval_state(request)
+        if selected is None:
+            return queryset
+        return queryset.filter(status__in=self.approval_state_statuses[selected])
 
     def changelist_view(self, request, extra_context=None):
         selected = self._approval_state(request)
@@ -628,11 +725,27 @@ class TestResourceProfileForm(forms.ModelForm):
         label="本配置包含的测试能力（可多选）",
         help_text="复合测试请一次勾选全部所需能力；它们共同属于同一个被测系统。",
     )
+    ui_execution_mode = forms.ChoiceField(
+        choices=(
+            ("procedure", "函数编排"),
+            ("agent", "网页 Agent"),
+        ),
+        widget=forms.RadioSelect,
+        required=False,
+        label="UI 执行方式",
+    )
+    api_base_url = forms.URLField(
+        required=False,
+        assume_scheme="https",
+        label="被测 API 基础地址",
+        help_text="例如 https://staging.example.test/api。",
+    )
 
     class Meta:
         model = TestResourceProfile
         exclude = ("environment",)
         widgets = {
+            "ui_agent_asset_text": forms.Textarea(attrs={"rows": 5}),
             "api_asset_text": forms.Textarea(attrs={"rows": 5}),
             "database_asset_text": forms.Textarea(attrs={"rows": 5}),
             "performance_asset_text": forms.Textarea(attrs={"rows": 5}),
@@ -646,6 +759,14 @@ class TestResourceProfileForm(forms.ModelForm):
             "ui_procedure_database": (
                 "UI 函数资产库",
                 "上传一个网站对应的 SQLite 文件，例如 127.0.0.1.sqlite。",
+            ),
+            "ui_agent_asset_file": (
+                "网页 Agent 资料文件（可选）",
+                "上传包含 URL、功能和最大步数的表格或常见文本文件。",
+            ),
+            "ui_agent_asset_text": (
+                "网页 Agent 资料说明（可选）",
+                "大致填写 URL、页面或功能名称、最大步数即可；与文件二选一。",
             ),
             "api_openapi_file": (
                 "接口资料文件（可选）",
@@ -683,10 +804,19 @@ class TestResourceProfileForm(forms.ModelForm):
             self.initial["resource_types"] = sorted(
                 self.instance.configured_channels()
             )
+            if self.instance.ui_procedure_database:
+                self.initial["ui_execution_mode"] = "procedure"
+            elif self.instance.ui_agent_asset_file or self.instance.ui_agent_asset_text.strip():
+                self.initial["ui_execution_mode"] = "agent"
 
     def clean(self):
         cleaned = super().clean()
         selected = set(cleaned.get("resource_types") or [])
+        ui_mode = str(cleaned.get("ui_execution_mode") or "")
+        if cleaned.get("ui_agent_asset_file") and str(
+            cleaned.get("ui_agent_asset_text") or ""
+        ).strip():
+            self.add_error("ui_agent_asset_text", "网页 Agent 资料文件和文字说明选择一种即可")
         for file_name, text_name, label in (
             ("api_openapi_file", "api_asset_text", "接口资料"),
             ("database_query_file", "database_asset_text", "数据库资料"),
@@ -694,8 +824,16 @@ class TestResourceProfileForm(forms.ModelForm):
         ):
             if cleaned.get(file_name) and str(cleaned.get(text_name) or "").strip():
                 self.add_error(text_name, f"{label}文件和文字说明选择一种即可")
+        ui_complete = (
+            ui_mode == "procedure" and bool(cleaned.get("ui_procedure_database"))
+        ) or (
+            ui_mode == "agent"
+            and bool(cleaned.get("ui_agent_asset_file") or str(cleaned.get("ui_agent_asset_text") or "").strip())
+        )
+        if "ui" in selected and not ui_mode:
+            self.add_error("ui_execution_mode", "请选择 UI 执行方式")
         complete = {
-            "ui": bool(cleaned.get("ui_procedure_database")),
+            "ui": ui_complete,
             "api": bool(
                 (cleaned.get("api_openapi_file") or cleaned.get("api_asset_text"))
                 and cleaned.get("api_base_url")
@@ -729,6 +867,8 @@ class TestResourceProfileForm(forms.ModelForm):
             for field_name in (
                 "system_id",
                 "environment",
+                "ui_agent_asset_file",
+                "ui_agent_asset_text",
                 "api_openapi_file",
                 "api_asset_text",
                 "api_base_url",
@@ -749,9 +889,12 @@ class TestResourceProfileForm(forms.ModelForm):
     def save(self, commit=True):
         instance = super().save(commit=False)
         selected = set(self.cleaned_data.get("resource_types") or [])
+        ui_mode = str(self.cleaned_data.get("ui_execution_mode") or "")
         category_fields = {
             "ui": (
                 "ui_procedure_database",
+                "ui_agent_asset_file",
+                "ui_agent_asset_text",
             ),
             "api": ("api_openapi_file", "api_asset_text", "api_base_url"),
             "database": (
@@ -767,6 +910,12 @@ class TestResourceProfileForm(forms.ModelForm):
                 continue
             for field_name in fields:
                 setattr(instance, field_name, None if field_name == "port_number" else "")
+        if "ui" in selected:
+            if ui_mode == "procedure":
+                instance.ui_agent_asset_file = ""
+                instance.ui_agent_asset_text = ""
+            elif ui_mode == "agent":
+                instance.ui_procedure_database = ""
         if commit:
             instance.save()
         return instance
@@ -998,6 +1147,14 @@ class TestWorkflowForm(forms.ModelForm):
 
 
 class TestIntentImportForm(TestWorkflowForm):
+    generation_count = forms.IntegerField(
+        min_value=1,
+        max_value=10,
+        initial=1,
+        label="生成数量",
+        help_text="一次生成 1-10 个测试计划草稿，用于保留不同的生成候选。",
+    )
+
     class Meta(TestWorkflowForm.Meta):
         model = TestIntentImport
 
@@ -1043,8 +1200,8 @@ class TestPlanExecutionInputForm(forms.ModelForm):
         label="执行数据（变量 / 值，可选）",
         widget=forms.Textarea(attrs={"rows": 6}),
         help_text=(
-            "每行填写 名称=值，例如 account_id=A-1。值可以是普通文本、数字或对象。"
-            "密码、token 和连接串必须由部署环境注入。"
+            "每行填写 名称=值，例如 account_id=A-1。UI 测试可能事先不知道页面会要求哪些输入；"
+            "未注明的输入可能被模型自动编造，请在审批执行计划时重点检查。测试账号和密码可作为本次变量填写。"
         ),
     )
     class Meta:
@@ -1086,10 +1243,6 @@ class TestPlanExecutionInputForm(forms.ModelForm):
             except json.JSONDecodeError:
                 value = raw_value
             values[name] = value
-        from .intent.contracts import contains_secret_value
-
-        if contains_secret_value(values):
-            raise ValidationError("运行变量不能包含密码、token、连接串等秘密值")
         return values
 
     def execution_input(self):
@@ -1407,7 +1560,7 @@ class TestResourceProfileAdmin(SingleRecordActionAdmin, admin.ModelAdmin):
     page_description = "一个系统和环境的一体化资源，可同时配置多种复合测试能力"
 
     class Media:
-        js = ("test_platform/resource_form_v2.js",)
+        js = ("test_platform/resource_form_v3.js",)
 
     list_display = (
         "name",
@@ -1475,17 +1628,23 @@ class TestResourceProfileAdmin(SingleRecordActionAdmin, admin.ModelAdmin):
                 {
                     "classes": ("resource-section", "resource-ui"),
                     "description": mark_safe(
-                        '<div class="tb-resource-guide"><p><strong>数据构成：</strong>每个网站一个 SQLite 文件。'
+                        '<div class="tb-resource-guide"><p><strong>函数编排：</strong>每个网站一个 SQLite 文件。'
                         '库级数据包含 library_id、site、schema 版本、发布时间和整库 hash；'
                         '每个当前激活的 UI 函数包含 procedure_id、version、description、parameters、'
                         '完整 ProcedureV1 payload 和 fingerprint。payload 内含前置页面、分段操作、完成检查、'
                         '后置检查、可用执行后端、来源和验证信息，不包含导航、录制过程、Repair 经验或调用历史。</p>'
                         '<p><strong>示例：</strong><code>local.workflow.login@v2</code>；参数 username 来自 profile、'
                         'password 来自 secret；操作依次为输入用户名、输入密码、选择角色、点击登录；'
-                        '完成与后置检查均验证登录成功提示可见。</p></div>'
+                        '完成与后置检查均验证登录成功提示可见。</p>'
+                        '<p><strong>网页 Agent：</strong>文件或文字只包含 URL、页面/功能和最大步数。'
+                        '例如：<code>https://shop.example.test | 商品购物车 | 20</code>。'
+                        '不要填写控件步骤、所需变量、账号密码或执行历史。</p></div>'
                     ),
                     "fields": (
+                        "ui_execution_mode",
                         "ui_procedure_database",
+                        "ui_agent_asset_file",
+                        "ui_agent_asset_text",
                     ),
                 },
             ),
@@ -1589,7 +1748,7 @@ class TestWorkflowAdmin(SingleRecordActionAdmin, admin.ModelAdmin):
         "created_at",
         "updated_at",
     )
-    actions = None
+    actions = ("mark_selected", "unmark_selected", "delete_selected")
 
     def get_form(self, request, obj=None, change=False, **kwargs):
         form_class = super().get_form(request, obj, change, **kwargs)
@@ -1868,13 +2027,13 @@ class TestWorkflowAdmin(SingleRecordActionAdmin, admin.ModelAdmin):
         )
 
     @admin.action(description="生成测试计划")
-    def generate_design(self, request, queryset):
+    def generate_design(self, request, queryset, *, count=1):
         for obj in queryset:
             try:
-                queue_design_generation(obj)
+                queue_design_generation(obj, count=count)
                 self.message_user(
                     request,
-                    f"“{obj.title}”已提交生成，完成后会出现在测试计划审批列表。",
+                    f"“{obj.title}”已提交生成 {count} 个测试计划，完成后会出现在测试计划审批列表。",
                     messages.INFO,
                 )
             except Exception as exc:
@@ -1889,6 +2048,7 @@ class TestIntentImportAdmin(TestWorkflowAdmin):
     page_title = "测试意图"
     page_description = "提交需求并选择要生成的测试分类"
     list_display = (
+        "marked_status",
         "task_title",
         "category_display",
         "workflow_status",
@@ -1896,9 +2056,9 @@ class TestIntentImportAdmin(TestWorkflowAdmin):
         "updated_at",
     )
     list_display_links = ("task_title",)
-    list_filter = (TestCategoryFilter,)
+    list_filter = (MarkedRecordFilter, TestCategoryFilter)
     search_fields = ("workflow_id", "title", "requirement_text")
-    actions = None
+    actions = ("mark_selected", "unmark_selected", "delete_selected")
 
     def get_urls(self):
         custom = [
@@ -1941,12 +2101,16 @@ class TestIntentImportAdmin(TestWorkflowAdmin):
             initial["allowed_channels"] = [category]
         return initial
 
+    def get_fieldsets(self, request, obj=None):
+        fieldsets = list(super().get_fieldsets(request, obj))
+        title, options = fieldsets[0]
+        fields = list(options["fields"])
+        fields.append("generation_count")
+        fieldsets[0] = (title, {**options, "fields": tuple(fields)})
+        return tuple(fieldsets)
+
     def get_record_commands(self, request, obj):
-        if obj and obj.status in {
-            TestWorkflow.Status.DRAFT,
-            TestWorkflow.Status.DESIGN_CHANGES,
-            TestWorkflow.Status.ERROR,
-        }:
+        if obj and obj.status != TestWorkflow.Status.DESIGN_GENERATING:
             return [
                 {
                     "name": "_generate_test_plan",
@@ -1958,42 +2122,24 @@ class TestIntentImportAdmin(TestWorkflowAdmin):
         return []
 
     def run_generate_test_plan(self, request, obj):
-        self.generate_design(request, self.model.objects.filter(pk=obj.pk))
+        form = self.get_form(request, obj)(request.POST, request.FILES, instance=obj)
+        if not form.is_valid():
+            self.message_user(request, "生成数量或测试输入无效。", messages.ERROR)
+            return HttpResponseRedirect(request.path)
+        self.generate_design(
+            request,
+            self.model.objects.filter(pk=obj.pk),
+            count=form.cleaned_data["generation_count"],
+        )
         return HttpResponseRedirect(reverse("admin:test_platform_testintentimport_changelist"))
 
     def show_record_save(self, request, obj) -> bool:
         return bool(
-            obj is None
-            or obj.status
-            in {
-                TestWorkflow.Status.DRAFT,
-                TestWorkflow.Status.DESIGN_CHANGES,
-                TestWorkflow.Status.ERROR,
-            }
+            obj is None or obj.status != TestWorkflow.Status.DESIGN_GENERATING
         )
 
     def get_queryset(self, request):
-        queryset = super().get_queryset(request)
-        if getattr(getattr(request, "resolver_match", None), "url_name", "") == (
-            "test_platform_testintentimport_change"
-        ):
-            return queryset
-        return (
-            queryset
-            .filter(
-                status__in=(
-                    TestWorkflow.Status.DRAFT,
-                    TestWorkflow.Status.DESIGN_CHANGES,
-                    TestWorkflow.Status.ERROR,
-                    TestWorkflow.Status.DESIGN_GENERATING,
-                )
-            )
-            .filter(
-                Q(test_plan_artifacts__isnull=True)
-                | Q(test_plan_artifacts__status=TestPlanArtifact.Status.CHANGES)
-            )
-            .distinct()
-        )
+        return super().get_queryset(request)
 
 
 def _artifact_preview_proxy(*, design=None, plan=None):
@@ -2034,14 +2180,15 @@ class TestPlanArtifactAdmin(
         ),
     )
     list_display = (
-        "approval_record_title",
+        "marked_status",
+        "title",
         "category_display",
         "approval_status",
         "source_kind",
         "updated_at",
     )
-    list_display_links = ("approval_record_title",)
-    list_filter = (ApprovalStateParameterFilter, TestCategoryFilter)
+    list_display_links = ("title",)
+    list_filter = (MarkedRecordFilter, ApprovalStateParameterFilter, TestCategoryFilter)
     search_fields = ("artifact_id", "design_id", "title")
     readonly_fields = (
         "artifact_id",
@@ -2083,12 +2230,12 @@ class TestPlanArtifactAdmin(
         (
             "审批处理",
             {
-                "description": "填写新增或修改需求后，可重新生成当前测试计划；也可退回上一层修改测试意图。",
+                "description": "填写修改要求后，可按当前计划重新生成新的测试计划版本。",
                 "fields": ("review_comments",),
             },
         ),
     )
-    actions = None
+    actions = ("mark_selected", "unmark_selected", "delete_selected")
     approval_state_statuses = {
         "pending": (TestPlanArtifact.Status.REVIEW,),
         "completed": (TestPlanArtifact.Status.APPROVED,),
@@ -2160,28 +2307,14 @@ class TestPlanArtifactAdmin(
         return False
 
     def has_delete_permission(self, request, obj=None):
-        return bool(
-            obj
-            and obj.status in {
-                TestPlanArtifact.Status.REVIEW,
-                TestPlanArtifact.Status.BLOCKED,
-                TestPlanArtifact.Status.CHANGES,
-            }
-            and not obj.execution_plans.exists()
-        )
+        return True
 
     @staticmethod
     def _can_generate_execution_plan(obj):
-        return obj.status == TestPlanArtifact.Status.REVIEW or (
-            obj.status == TestPlanArtifact.Status.APPROVED
-            and not obj.execution_plans.filter(
-                status__in={
-                    ExecutionPlanArtifact.Status.GENERATING,
-                    ExecutionPlanArtifact.Status.REVIEW,
-                    ExecutionPlanArtifact.Status.APPROVED,
-                }
-            ).exists()
-        )
+        return obj.status in {
+            TestPlanArtifact.Status.REVIEW,
+            TestPlanArtifact.Status.APPROVED,
+        }
 
     def get_fieldsets(self, request, obj=None):
         fieldsets = list(super().get_fieldsets(request, obj))
@@ -2192,8 +2325,8 @@ class TestPlanArtifactAdmin(
                     "执行计划输入",
                     {
                         "description": (
-                            "这些非秘密变量将冻结到即将生成的执行计划中；"
-                            "执行和失败重试都会复用同一份输入。"
+                            "这些本次运行变量将冻结到即将生成的执行计划中；"
+                            "执行和同计划重新运行都会复用同一份输入。"
                         ),
                         "fields": ("runtime_variables",),
                     },
@@ -2214,7 +2347,7 @@ class TestPlanArtifactAdmin(
         snapshot = (obj.generation_result or {}).get("input_snapshot") or {}
         documents = snapshot.get("approved_knowledge") or []
         if not documents:
-            return format_html(
+            return mark_safe(
                 "<div class='tb-knowledge-empty'><strong>未使用额外业务知识</strong>"
                 "<span>本计划依据需求原文、测试分类和覆盖方式生成。</span></div>"
             )
@@ -2247,11 +2380,7 @@ class TestPlanArtifactAdmin(
             commands.append(
                 {
                     "name": "_approve_test_plan",
-                    "label": (
-                        "审批通过并生成执行计划"
-                        if obj.status == TestPlanArtifact.Status.REVIEW
-                        else "生成执行计划"
-                    ),
+                    "label": "通过并生成执行计划" if obj.status == TestPlanArtifact.Status.REVIEW else "生成执行计划",
                     "handler": "run_approve_test_plan",
                     "kind": "primary",
                 }
@@ -2269,14 +2398,6 @@ class TestPlanArtifactAdmin(
                         "label": "按修改需求重新生成当前计划",
                         "handler": "run_revise_test_plan",
                         "kind": "secondary",
-                    }
-                )
-                commands.append(
-                    {
-                        "name": "_return_test_plan",
-                        "label": "退回上一层",
-                        "handler": "run_return_test_plan",
-                        "kind": "danger",
                     }
                 )
         return commands
@@ -2323,35 +2444,6 @@ class TestPlanArtifactAdmin(
             reverse("admin:test_platform_executionplanartifact_changelist")
         )
 
-    def run_return_test_plan(self, request, obj):
-        if not str(obj.review_comments or "").strip():
-            self.message_user(request, "退回前请填写审批意见。", messages.ERROR)
-            return HttpResponseRedirect(
-                reverse("admin:test_platform_testplanartifact_change", args=[obj.pk])
-            )
-        if obj.status in {TestPlanArtifact.Status.REVIEW, TestPlanArtifact.Status.BLOCKED}:
-            self.request_changes(request, self.model.objects.filter(pk=obj.pk))
-            obj.refresh_from_db(fields=("status",))
-            if obj.status != TestPlanArtifact.Status.CHANGES:
-                return HttpResponseRedirect(
-                    reverse("admin:test_platform_testplanartifact_change", args=[obj.pk])
-                )
-        elif obj.status == TestPlanArtifact.Status.APPROVED:
-            obj.execution_plans.filter(
-                status=ExecutionPlanArtifact.Status.APPROVED
-            ).update(status=ExecutionPlanArtifact.Status.SUPERSEDED, updated_at=timezone.now())
-            obj.status = TestPlanArtifact.Status.CHANGES
-            obj.save(update_fields=("status", "review_comments", "updated_at"))
-        if obj.source_intent_id:
-            TestWorkflow.objects.filter(pk=obj.source_intent_id).update(
-                status=TestWorkflow.Status.DESIGN_CHANGES,
-                updated_at=timezone.now(),
-            )
-            return HttpResponseRedirect(
-                reverse("admin:test_platform_testintentimport_change", args=[obj.source_intent_id])
-            )
-        return HttpResponseRedirect(reverse("admin:test_platform_testplanartifact_changelist"))
-
     def run_revise_test_plan(self, request, obj):
         comments = str(obj.review_comments or "").strip()
         if not comments:
@@ -2365,28 +2457,13 @@ class TestPlanArtifactAdmin(
                 reverse("admin:test_platform_testplanartifact_change", args=[obj.pk])
             )
 
-        if obj.status in {TestPlanArtifact.Status.REVIEW, TestPlanArtifact.Status.BLOCKED}:
-            self.request_changes(request, self.model.objects.filter(pk=obj.pk))
-            obj.refresh_from_db(fields=("status",))
-            if obj.status != TestPlanArtifact.Status.CHANGES:
-                return HttpResponseRedirect(
-                    reverse("admin:test_platform_testplanartifact_change", args=[obj.pk])
-                )
-        elif obj.status == TestPlanArtifact.Status.APPROVED:
-            obj.execution_plans.filter(
-                status=ExecutionPlanArtifact.Status.APPROVED
-            ).update(status=ExecutionPlanArtifact.Status.SUPERSEDED, updated_at=timezone.now())
-            obj.status = TestPlanArtifact.Status.CHANGES
-            obj.save(update_fields=("status", "review_comments", "updated_at"))
-        TestWorkflow.objects.filter(pk=obj.source_intent_id).update(
-            status=TestWorkflow.Status.DESIGN_CHANGES,
-            updated_at=timezone.now(),
+        obj.status = TestPlanArtifact.Status.CHANGES
+        obj.save(update_fields=("status", "updated_at"))
+        queue_design_generation(
+            obj.source_intent,
+            previous_artifact_id=obj.pk,
         )
-        intent_admin = admin.site._registry[TestIntentImport]
-        intent_admin.generate_design(
-            request,
-            TestIntentImport.objects.filter(pk=obj.source_intent_id),
-        )
+        self.message_user(request, "已按修改要求重新生成测试计划。", messages.INFO)
         return HttpResponseRedirect(reverse("admin:test_platform_testplanartifact_changelist"))
 
     def get_queryset(self, request):
@@ -2441,14 +2518,7 @@ class TestPlanArtifactAdmin(
                         approved_bundle=_json(output.approved_bundle),
                     )
                 artifact.refresh_from_db()
-                previous = artifact.execution_plans.order_by("-version", "-id").first()
-                feedback = None
-                if previous is not None:
-                    feedback = (
-                        str(previous.review_comments or "").strip()
-                        or str((previous.review_payload or {}).get("comments") or "").strip()
-                        or "请根据执行计划审核意见修订映射"
-                    )
+                feedback = str(artifact.review_comments or "").strip() or None
                 execution_artifact = queue_execution_plan_generation(
                     artifact,
                     feedback=feedback,
@@ -2474,51 +2544,15 @@ class TestPlanArtifactAdmin(
                     messages.ERROR,
                 )
 
-    @admin.action(description="退回测试计划修改")
-    def request_changes(self, request, queryset):
-        from .approval_service import persist_test_plan_changes
-        from .intent.contracts import ReviewDecision
-        from .service_factory import get_workflow
-
-        for artifact in queryset:
-            try:
-                comments = str(artifact.review_comments or "").strip()
-                if not comments:
-                    raise ValidationError("退回测试计划前必须填写审批意见")
-                if artifact.status not in {
-                    TestPlanArtifact.Status.REVIEW,
-                    TestPlanArtifact.Status.BLOCKED,
-                }:
-                    raise ValidationError("只有待审批或已阻塞测试计划可以退回")
-                output = get_workflow().review_design(
-                    _generation_result_from_payload(artifact.generation_result),
-                    decision=ReviewDecision.CHANGES_REQUESTED,
-                    comments=comments,
-                )
-                artifact = persist_test_plan_changes(
-                    artifact.pk,
-                    expected_status=artifact.status,
-                    review_payload=_json(output.review),
-                )
-                self.message_user(request, f"“{artifact.title}”已退回修改。", messages.WARNING)
-            except Exception as exc:
-                if not isinstance(exc, ValidationError):
-                    TestPlanArtifact.objects.filter(pk=artifact.pk).update(
-                        last_error=str(exc)[:20_000]
-                    )
-                self.message_user(request, f"“{artifact.title}”退回失败：{exc}", messages.ERROR)
-
-
 @admin.register(ExecutionPlanArtifact)
 class ExecutionPlanArtifactAdmin(
     AuditPayloadAdminMixin,
-    ApprovalStateTabsMixin,
     SingleRecordActionAdmin,
     admin.ModelAdmin,
 ):
-    change_list_template = "admin/test_platform/approval_change_list.html"
-    page_title = "执行计划审批"
-    page_description = "确认每项测试将如何执行，以及预期结果是否完整"
+    change_list_template = "admin/test_platform/change_list_base.html"
+    page_title = "执行计划"
+    page_description = "审批后可单个或批量运行，同一计划可以重复运行"
     polling_statuses = (ExecutionPlanArtifact.Status.GENERATING,)
     audit_payload_specs = (
         (
@@ -2543,15 +2577,17 @@ class ExecutionPlanArtifactAdmin(
         ),
     )
     list_display = (
-        "approval_record_title",
+        "marked_status",
+        "title",
         "source_kind_display",
         "category_display",
-        "approval_status",
+        "execution_status",
         "updated_at",
     )
-    list_display_links = ("approval_record_title",)
+    list_display_links = ("title",)
     list_filter = (
-        ApprovalStateParameterFilter,
+        MarkedRecordFilter,
+        ExecutionPlanStateFilter,
         ExecutionPlanSourceFilter,
         TestCategoryFilter,
     )
@@ -2634,27 +2670,17 @@ class ExecutionPlanArtifactAdmin(
         (
             "审批处理",
             {
-                "description": "填写新增或修改需求后，可重新生成当前执行计划；也可退回上一层修改测试计划。",
+                "description": "填写修改要求后，可基于当前测试计划重新生成执行计划。",
                 "fields": ("review_comments",),
             },
         ),
     )
-    actions = None
-    approval_state_statuses = {
-        "pending": (
-            ExecutionPlanArtifact.Status.GENERATING,
-            ExecutionPlanArtifact.Status.REVIEW,
-        ),
-        "completed": (
-            ExecutionPlanArtifact.Status.APPROVED,
-            ExecutionPlanArtifact.Status.SUPERSEDED,
-        ),
-        "failed": (
-            ExecutionPlanArtifact.Status.BLOCKED,
-            ExecutionPlanArtifact.Status.CHANGES,
-            ExecutionPlanArtifact.Status.ERROR,
-        ),
-    }
+    actions = (
+        "run_selected",
+        "mark_selected",
+        "unmark_selected",
+        "delete_selected",
+    )
 
     def get_urls(self):
         opts = self.model._meta
@@ -2671,16 +2697,7 @@ class ExecutionPlanArtifactAdmin(
         return False
 
     def has_delete_permission(self, request, obj=None):
-        return bool(
-            obj
-            and obj.status in {
-                ExecutionPlanArtifact.Status.REVIEW,
-                ExecutionPlanArtifact.Status.BLOCKED,
-                ExecutionPlanArtifact.Status.CHANGES,
-                ExecutionPlanArtifact.Status.ERROR,
-            }
-            and not obj.runs.exists()
-        )
+        return True
 
     def get_fieldsets(self, request, obj=None):
         fieldsets = list(super().get_fieldsets(request, obj))
@@ -2831,6 +2848,21 @@ class ExecutionPlanArtifactAdmin(
             _generation_progress_display(obj, compact=True),
         )
 
+    @admin.display(description="运行状态", ordering="status")
+    def execution_status(self, obj):
+        if obj.status == ExecutionPlanArtifact.Status.GENERATING:
+            return format_html(
+                "{}{}",
+                _status_badge("pending", "生成中"),
+                _generation_progress_display(obj, compact=True),
+            )
+        if obj.status in {
+            ExecutionPlanArtifact.Status.REVIEW,
+            ExecutionPlanArtifact.Status.APPROVED,
+        }:
+            return _status_badge("pending", "等待运行")
+        return _status_badge("failed", "需重新生成")
+
     @admin.display(description="生成进度")
     def generation_progress_display(self, obj):
         return _generation_progress_display(obj)
@@ -2846,11 +2878,20 @@ class ExecutionPlanArtifactAdmin(
                 commands.append(
                     {
                         "name": "_approve_execution_plan",
-                        "label": "审批通过并执行",
-                        "handler": "run_approve_execution_plan",
+                        "label": "运行",
+                        "handler": "run_execution_plan",
                         "kind": "primary",
                     }
                 )
+        elif obj.status == ExecutionPlanArtifact.Status.APPROVED:
+            commands.append(
+                {
+                    "name": "_run_execution_plan",
+                    "label": "运行",
+                    "handler": "run_execution_plan",
+                    "kind": "primary",
+                }
+            )
         if obj.status in {
             ExecutionPlanArtifact.Status.REVIEW,
             ExecutionPlanArtifact.Status.BLOCKED,
@@ -2862,12 +2903,6 @@ class ExecutionPlanArtifactAdmin(
                 "label": "按修改需求重新生成当前计划",
                 "handler": "run_revise_execution_plan",
                 "kind": "secondary",
-            })
-            commands.append({
-                "name": "_return_execution_plan",
-                "label": "退回上一层",
-                "handler": "run_return_execution_plan",
-                "kind": "danger",
             })
         return commands
 
@@ -2889,38 +2924,17 @@ class ExecutionPlanArtifactAdmin(
             fields.append("review_comments")
         return tuple(dict.fromkeys(fields))
 
-    def run_approve_execution_plan(self, request, obj):
-        self.approve_execution_plan(request, self.model.objects.filter(pk=obj.pk))
+    def run_execution_plan(self, request, obj):
+        if obj.status == ExecutionPlanArtifact.Status.REVIEW:
+            self.approve_execution_plan(request, self.model.objects.filter(pk=obj.pk))
         obj.refresh_from_db(fields=("status",))
         if obj.status == ExecutionPlanArtifact.Status.APPROVED:
-            return HttpResponseRedirect(reverse("admin:test_platform_testexecutionrun_changelist"))
+            self._queue_run(request, obj)
+            return HttpResponseRedirect(
+                reverse("admin:test_platform_testexecutionrun_changelist")
+            )
         return HttpResponseRedirect(
             reverse("admin:test_platform_executionplanartifact_change", args=[obj.pk])
-        )
-
-    def run_return_execution_plan(self, request, obj):
-        if not str(obj.review_comments or "").strip():
-            self.message_user(request, "退回前请填写审批意见。", messages.ERROR)
-            return HttpResponseRedirect(
-                reverse("admin:test_platform_executionplanartifact_change", args=[obj.pk])
-            )
-        if obj.status == ExecutionPlanArtifact.Status.APPROVED:
-            obj.status = ExecutionPlanArtifact.Status.SUPERSEDED
-            obj.save(update_fields=("status", "review_comments", "updated_at"))
-            TestPlanArtifact.objects.filter(pk=obj.source_test_plan_id).update(
-                review_comments=obj.review_comments,
-                updated_at=timezone.now(),
-            )
-        elif obj.status == ExecutionPlanArtifact.Status.ERROR:
-            obj.status = ExecutionPlanArtifact.Status.CHANGES
-            obj.save(update_fields=("status", "updated_at"))
-        else:
-            self.request_changes(request, self.model.objects.filter(pk=obj.pk))
-        return HttpResponseRedirect(
-            reverse(
-                "admin:test_platform_testplanartifact_change",
-                args=[obj.source_test_plan_id],
-            )
         )
 
     def run_revise_execution_plan(self, request, obj):
@@ -2931,33 +2945,55 @@ class ExecutionPlanArtifactAdmin(
                 reverse("admin:test_platform_executionplanartifact_change", args=[obj.pk])
             )
 
-        if obj.status == ExecutionPlanArtifact.Status.APPROVED:
-            try:
-                queue_execution_plan_generation(
-                    obj.source_test_plan,
-                    feedback=comments,
-                    execution_input=obj.execution_input,
-                )
-            except Exception as exc:
-                self.message_user(request, f"重新生成失败：{exc}", messages.ERROR)
-            else:
-                self.message_user(request, "已按修改需求重新生成执行计划。", messages.INFO)
-        else:
-            self.request_changes(request, self.model.objects.filter(pk=obj.pk))
-            obj.refresh_from_db(fields=("status",))
-            if obj.status != ExecutionPlanArtifact.Status.CHANGES:
-                return HttpResponseRedirect(
-                    reverse("admin:test_platform_executionplanartifact_change", args=[obj.pk])
-                )
-            test_plan_admin = admin.site._registry[TestPlanArtifact]
-            test_plan_admin.approve_and_generate_execution_plan(
-                request,
-                TestPlanArtifact.objects.filter(pk=obj.source_test_plan_id),
+        try:
+            queue_execution_plan_generation(
+                obj.source_test_plan,
+                feedback=comments,
                 execution_input=obj.execution_input,
             )
+        except Exception as exc:
+            self.message_user(request, f"重新生成失败：{exc}", messages.ERROR)
+        else:
+            if obj.status != ExecutionPlanArtifact.Status.APPROVED:
+                obj.status = ExecutionPlanArtifact.Status.CHANGES
+                obj.save(update_fields=("status", "updated_at"))
+            self.message_user(request, "已按修改需求重新生成执行计划。", messages.INFO)
         return HttpResponseRedirect(
             reverse("admin:test_platform_executionplanartifact_changelist")
         )
+
+    def _queue_run(self, request, artifact):
+        from .execution_service import queue_execution_plan_artifact
+
+        try:
+            run = queue_execution_plan_artifact(artifact)
+        except Exception as exc:
+            self.message_user(request, f"“{artifact.title}”运行提交失败：{exc}", messages.ERROR)
+            return None
+        self.message_user(
+            request,
+            f"“{artifact.title}”已提交运行，批次 {run.run_id}。",
+            messages.SUCCESS,
+        )
+        return run
+
+    @admin.action(description="批量运行所选执行计划")
+    def run_selected(self, request, queryset):
+        for artifact in queryset.select_related("source_test_plan", "resource_profile"):
+            if artifact.status == ExecutionPlanArtifact.Status.REVIEW:
+                self.approve_execution_plan(
+                    request,
+                    self.model.objects.filter(pk=artifact.pk),
+                )
+                artifact.refresh_from_db(fields=("status",))
+            if artifact.status != ExecutionPlanArtifact.Status.APPROVED:
+                self.message_user(
+                    request,
+                    f"“{artifact.title}”当前不可运行。",
+                    messages.WARNING,
+                )
+                continue
+            self._queue_run(request, artifact)
 
     def get_queryset(self, request):
         return (
@@ -3057,6 +3093,41 @@ class ExecutionPlanArtifactAdmin(
         """Show Procedures frozen from the selected asset database."""
 
         profiles = (obj.catalog_snapshot or {}).get("procedure_profiles") or []
+        agent_profiles = (obj.catalog_snapshot or {}).get("agent_ui_profiles") or []
+        if agent_profiles:
+            plan = (getattr(obj, "compilation_result", None) or {}).get("plan") or {}
+            used_refs = {
+                str(row.get("operation_ref") or "")
+                for flow in plan.get("flows") or []
+                for stage in flow.get("stages") or []
+                if (stage.get("execution") or {}).get("kind") == "stagehand_agent"
+                for row in (stage.get("execution") or {}).get("rows") or []
+            }
+            cards = []
+            for profile in agent_profiles:
+                features = [
+                    item.get("description") or item.get("operation_ref")
+                    for item in profile.get("operations") or []
+                    if item.get("operation_ref") in used_refs
+                ]
+                if not features:
+                    continue
+                cards.append(
+                    format_html(
+                        "<section class='tb-capability-card'><h4>网页 Agent 资产</h4>"
+                        "<p>起始 URL：<code>{}</code><br>最大步数：{}</p>"
+                        "<div><strong>本次功能范围</strong><ul>{}</ul></div></section>",
+                        profile.get("start_url") or "-",
+                        profile.get("max_steps") or "-",
+                        format_html_join("", "<li>{}</li>", ((item,) for item in features)),
+                    )
+                )
+            if cards:
+                return format_html(
+                    "<details class='tb-capability-source'><summary>查看网页 Agent 资产</summary>"
+                    "<div class='tb-knowledge-list'>{}</div></details>",
+                    format_html_join("", "{}", ((card,) for card in cards)),
+                )
         if not profiles:
             return "本计划不包含页面操作"
 
@@ -3258,7 +3329,15 @@ class ExecutionPlanArtifactAdmin(
                 expression += f" {quoted(expected)}"
             return "assert " + expression
 
-        if kind in UI_EXECUTOR_KINDS:
+        if kind == "stagehand_agent":
+            lines.append(f"open({quoted(execution.get('start_url'))})")
+            lines.append(f"max_steps = {execution.get('max_steps')}")
+            for index, item in enumerate(execution.get("rows") or [], start=1):
+                lines.append(f"action_{index} = agent_execute({quoted(item.get('action'))})")
+                for assertion in item.get("assertions") or []:
+                    statement = assertion.get("statement") or "页面检查"
+                    lines.append(f"check_{index} = verify({quoted(statement)})")
+        elif kind == "procedure_playwright":
             for index, item in enumerate(execution.get("rows") or [], start=1):
                 procedure = (
                     f"{item.get('procedure_id')}@v{item.get('procedure_version')}"
@@ -3371,7 +3450,20 @@ class ExecutionPlanArtifactAdmin(
         kind = execution.get("kind")
         rows = []
         headers = []
-        if kind in UI_EXECUTOR_KINDS:
+        if kind == "stagehand_agent":
+            headers = ["步骤", "Agent 页面操作", "检查"]
+            for index, item in enumerate(execution.get("rows") or [], start=1):
+                rows.append(
+                    [
+                        index,
+                        item.get("action") or item.get("operation_ref") or "-",
+                        "；".join(
+                            cls._assertion_text(value)
+                            for value in item.get("assertions") or []
+                        ) or "无独立检查",
+                    ]
+                )
+        elif kind == "procedure_playwright":
             headers = ["步骤", "页面操作", "输入", "检查"]
             for index, item in enumerate(execution.get("rows") or [], start=1):
                 checks = [
@@ -3696,27 +3788,6 @@ class ExecutionPlanArtifactAdmin(
                         else None
                     ),
                 )
-                if output.approved_bundle is not None:
-                    try:
-                        from .execution_service import queue_execution_plan_artifact
-
-                        run = queue_execution_plan_artifact(artifact)
-                    except Exception as exc:
-                        ExecutionPlanArtifact.objects.filter(pk=artifact.pk).update(
-                            last_error=str(exc)[:20_000]
-                        )
-                        self.message_user(
-                            request,
-                            f"“{artifact.title}”审批已通过，但提交执行失败：{exc}",
-                            messages.ERROR,
-                        )
-                    else:
-                        self.message_user(
-                            request,
-                            f"“{artifact.title}”已审批并提交执行，批次 {run.run_id}。",
-                            messages.SUCCESS,
-                        )
-                    continue
                 self.message_user(
                     request,
                     f"“{artifact.title}”{artifact.get_status_display()}。",
@@ -3734,21 +3805,6 @@ class ExecutionPlanArtifactAdmin(
         from .planning.contracts import PlanReviewDecision
 
         self._review(request, queryset, PlanReviewDecision.APPROVED)
-
-    @admin.action(description="退回执行计划修改")
-    def request_changes(self, request, queryset):
-        from .planning.contracts import PlanReviewDecision
-
-        for artifact in queryset:
-            if not str(artifact.review_comments or "").strip():
-                self.message_user(
-                    request,
-                    f"“{artifact.title}”退回失败：退回前必须填写审批意见。",
-                    messages.ERROR,
-                )
-                return
-        self._review(request, queryset, PlanReviewDecision.CHANGES_REQUESTED)
-
 
 _WORKFLOW_STEP_ORDER = {
     "TestResourceProfile": 10,
@@ -3786,17 +3842,18 @@ admin.site.get_app_list = _ordered_workflow_app_list.__get__(admin.site, type(ad
 
 @admin.register(TestExecutionRun)
 class TestExecutionRunAdmin(SingleRecordActionAdmin, admin.ModelAdmin):
-    actions = None
+    actions = ("mark_selected", "unmark_selected", "delete_selected")
     change_list_template = "admin/test_platform/execution_run_change_list.html"
     list_display = (
+        "marked_status",
         "run_overview",
         "pass_result",
         "started_at_display",
         "run_source_summary",
         "quick_report_link",
-        "retry_link",
     )
     list_filter = (
+        MarkedRecordFilter,
         ExecutionRunDateFilter,
         ExecutionRunStatusFilter,
     )
@@ -3837,7 +3894,7 @@ class TestExecutionRunAdmin(SingleRecordActionAdmin, admin.ModelAdmin):
         ),
     )
 
-    retryable_statuses = frozenset(
+    failure_statuses = frozenset(
         {
             TestExecutionRun.Status.FAILED,
             TestExecutionRun.Status.BLOCKED,
@@ -3845,16 +3902,6 @@ class TestExecutionRunAdmin(SingleRecordActionAdmin, admin.ModelAdmin):
             TestExecutionRun.Status.INCONCLUSIVE,
         }
     )
-
-    def get_urls(self):
-        custom = [
-            path(
-                "<path:object_id>/retry/",
-                self.admin_site.admin_view(self.retry_view),
-                name="test_platform_testexecutionrun_retry",
-            )
-        ]
-        return custom + super().get_urls()
 
     def get_queryset(self, request):
         return super().get_queryset(request).select_related(
@@ -3945,7 +3992,7 @@ class TestExecutionRunAdmin(SingleRecordActionAdmin, admin.ModelAdmin):
     def pass_result(self, obj):
         if obj.status == TestExecutionRun.Status.PASSED:
             return _status_badge("passed", "成功")
-        if obj.status in self.retryable_statuses:
+        if obj.status in self.failure_statuses:
             if obj.status == TestExecutionRun.Status.BLOCKED:
                 return _status_badge("blocked", "阻断")
             return _status_badge("failed", "失败")
@@ -4033,68 +4080,11 @@ class TestExecutionRunAdmin(SingleRecordActionAdmin, admin.ModelAdmin):
     @admin.display(description="来源")
     def run_source_summary(self, obj):
         return format_html(
-            "<div class='tb-run-source'><span><b>测试计划</b>{}</span>"
-            "<span><b>执行计划</b>{}</span><span><b>需求</b>{}</span></div>",
+            "<div class='tb-run-source'><span><b>测试意图</b>{}</span>"
+            "<span><b>测试计划</b>{}</span><span><b>执行计划</b>{}</span></div>",
+            self.requirement_link(obj),
             self.test_plan_link(obj),
             self.execution_plan_link(obj),
-            self.requirement_link(obj),
-        )
-
-    @admin.display(description="操作")
-    def retry_link(self, obj):
-        if obj.status not in self.retryable_statuses:
-            return "-"
-        if not obj.execution_plan_id:
-            return "缺少执行计划"
-        if obj.execution_plan.status != ExecutionPlanArtifact.Status.APPROVED:
-            return "计划已失效"
-        return format_html(
-            '<a class="button" href="{}">重试</a>',
-            reverse("admin:test_platform_testexecutionrun_retry", args=[obj.pk]),
-        )
-
-    def retry_view(self, request, object_id):
-        run = self.get_object(request, object_id)
-        if run is None:
-            raise Http404("运行记录不存在")
-        if not self.has_view_permission(request, run):
-            raise PermissionDenied
-        changelist_url = reverse("admin:test_platform_testexecutionrun_changelist")
-        if run.status not in self.retryable_statuses:
-            self.message_user(request, "只有未通过的终态批次可以重试。", messages.ERROR)
-            return HttpResponseRedirect(changelist_url)
-        execution_plan = run.execution_plan
-        if execution_plan is None or execution_plan.status != ExecutionPlanArtifact.Status.APPROVED:
-            self.message_user(request, "原执行计划已失效或不存在，不能直接重试。", messages.ERROR)
-            return HttpResponseRedirect(changelist_url)
-
-        if request.method == "POST":
-            from .execution_service import queue_execution_plan_artifact
-
-            try:
-                queue_execution_plan_artifact(execution_plan)
-            except Exception as exc:
-                self.message_user(request, f"重试提交失败：{exc}", messages.ERROR)
-            else:
-                self.message_user(
-                    request,
-                    "已提交重试，可在执行历史查看新记录。",
-                    messages.SUCCESS,
-                )
-                return HttpResponseRedirect(changelist_url)
-
-        context = {
-            **self.admin_site.each_context(request),
-            "title": "重试失败批次",
-            "opts": self.model._meta,
-            "run": run,
-            "execution_plan": execution_plan,
-            "changelist_url": changelist_url,
-        }
-        return TemplateResponse(
-            request,
-            "admin/test_platform/retry_execution_run.html",
-            context,
         )
 
     @admin.display(description="错误与限制")
@@ -4117,11 +4107,14 @@ class TestExecutionRunAdmin(SingleRecordActionAdmin, admin.ModelAdmin):
     def has_add_permission(self, request):
         return False
 
-    def has_change_permission(self, request, obj=None):
+    def show_record_save(self, request, obj) -> bool:
         return False
 
+    def has_change_permission(self, request, obj=None):
+        return True
+
     def has_delete_permission(self, request, obj=None):
-        return False
+        return True
 
     def changelist_view(self, request, extra_context=None):
         params = request.GET.copy()
@@ -4130,7 +4123,7 @@ class TestExecutionRunAdmin(SingleRecordActionAdmin, admin.ModelAdmin):
         params.pop("p", None)
         context = {
             "title": "执行历史",
-            "page_description": "每次运行的测试内容、结果、来源、报告与失败重试",
+            "page_description": "每次运行的测试内容、结果、来源、报告与失败定位",
             "run_date_form": ExecutionRunDateFilterForm(
                 {
                     "date_from": request.GET.get("date_from", ""),

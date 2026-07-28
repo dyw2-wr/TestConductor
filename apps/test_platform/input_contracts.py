@@ -4,10 +4,10 @@ The platform has three different input moments and they must not be mixed:
 
 * requirement input is interpreted by the first-layer model;
 * resource definitions are parsed before second-layer planning;
-* non-secret runtime values are frozen while the execution plan is generated.
+* runtime values are frozen while the execution plan is generated.
 
-This module validates the frozen input boundary. Secrets are still supplied by
-the process/factory, never by a stored plan or report.
+This module validates the frozen input boundary. Test-environment credentials
+may be included in the current-run input, but never in reusable resources.
 """
 
 from __future__ import annotations
@@ -37,7 +37,7 @@ class RuntimeInputBundle(BaseModel):
 
 
 def validate_runtime_input(raw: Any) -> RuntimeInputBundle:
-    """Validate non-secret input stored with an execution-plan revision."""
+    """Validate input stored with an execution-plan revision."""
 
     return RuntimeInputBundle.model_validate(raw or {})
 
