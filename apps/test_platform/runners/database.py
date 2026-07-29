@@ -25,7 +25,6 @@ from .base import (
     write_evidence,
 )
 from .contracts import (
-    ReadOnlyDatabaseConnection,
     DatabaseConnection,
     RunResult,
     RunStatus,
